@@ -181,8 +181,7 @@ const normalizeTextNameFields = (rows) =>
 /* ========================================================================== */
 /* ========================================================================== */
 /* ========================================================================== */
-/* ========================================================================== */
-/* ViewReports (FIXED: Always fetch-all; Fiscal YTD Apr→selected; normalized) */
+/* ViewReports (FIXED: Cumulative = Fiscal YTD Apr→selected with fallback)    */
 /* ========================================================================== */
 function ViewReports({ reportData, month, year }) {
   const [doc, setDoc] = useState(reportData);
@@ -199,7 +198,7 @@ function ViewReports({ reportData, month, year }) {
   const baseDistrict = reportData?.district || "";
   const baseInstitution = reportData?.institution || "";
 
-  // 1) Hydrate this specific document by ID (full payload)
+  // 1) Hydrate this specific document by ID (to get full payload)
   useEffect(() => {
     if (!id) return;
     let cancelled = false;
@@ -218,15 +217,16 @@ function ViewReports({ reportData, month, year }) {
     return () => { cancelled = true; };
   }, [id]);
 
-  // 2) Compute fiscal YTD cumulative (April → selected, inclusive)
+  // 2) Compute fiscal YTD cumulative (April → selected month inclusive)
   useEffect(() => {
     setCumTotals({});
     if (!month || !year || !baseDistrict || !baseInstitution) return;
 
     let cancelled = false;
 
+    // Use normalized month names (handles "Sep", "sept", etc.)
     const fiscalMonthsUpTo = (selMonth, selYear) => {
-      const sel = normMonth(selMonth); // handle "Sep", "sept", etc.
+      const sel = normMonth(selMonth);
       const idx = MONTHS.findIndex((m) => norm(m) === norm(sel));
       if (idx < 0) return [];
       const isJFM = (m) => {
@@ -254,41 +254,50 @@ function ViewReports({ reportData, month, year }) {
 
     (async () => {
       try {
-        // *** ALWAYS fetch all, then filter locally (backend limits/pagination safe) ***
-        const all = await fetchList(`${API_BASE}/api/reports`);
+        // Try filtered list first
+        const q =
+          `district=${encodeURIComponent(baseDistrict)}` +
+          `&institution=${encodeURIComponent(baseInstitution)}`;
+        let list = await fetchList(`${API_BASE}/api/reports?${q}`);
 
-        // Only this institution in this district
-        const sameInst = all.filter(
-          (d) => eq(d?.district, baseDistrict) && eq(d?.institution, baseInstitution)
-        );
+        // Fallback: fetch all and filter locally (some backends return only 1 doc)
+        if (!Array.isArray(list) || list.length < 2) {
+          const all = await fetchList(`${API_BASE}/api/reports`);
+          list = Array.isArray(all)
+            ? all.filter((d) => eq(d?.district, baseDistrict) && eq(d?.institution, baseInstitution))
+            : [];
+        }
 
-        const pairs = fiscalMonthsUpTo(month, Number(year));
+        const pairs = fiscalMonthsUpTo(month, Number(year)); // April→selected
+        if (!pairs.length) { setCumTotals({}); return; }
+
         const wanted = new Set(
-          pairs.map((p) => `${norm(normMonth(p.month))}|${String(p.year).trim()}`)
+          pairs.map((p) => `${norm(normMonth(p.month))}|${String(p.year)}`)
         );
 
-        // Latest doc per (month,year); normalize doc.month & trim year
+        // pick latest doc per (month,year) — normalize doc.month too
         const latestByMY = new Map();
-        for (const d of sameInst) {
-          const k = `${norm(normMonth(d?.month))}|${String(d?.year ?? "").trim()}`;
+        for (const d of list) {
+          if (!eq(d?.district, baseDistrict) || !eq(d?.institution, baseInstitution)) continue;
+          const k = `${norm(normMonth(d?.month))}|${String(d?.year || "")}`;
           if (!wanted.has(k)) continue;
-          const ts = Date.parse(d?.updatedAt || d?.createdAt || 0) || 0;
+          const ts = new Date(d?.updatedAt || d?.createdAt || 0).getTime();
           const prev = latestByMY.get(k);
-          const prevTs = prev ? (Date.parse(prev.updatedAt || prev.createdAt) || 0) : -Infinity;
+          const prevTs = prev ? new Date(prev.updatedAt || prev.createdAt || 0).getTime() : -Infinity;
           if (!prev || ts >= prevTs) latestByMY.set(k, d);
         }
 
+        // sum q1..qN across the picked months
         const sums = {};
         for (const d of latestByMY.values()) {
           const a = d?.answers || {};
           for (const [k, v] of Object.entries(a)) {
             if (/^q\d+$/.test(k)) {
               const n = Number(v) || 0;
-              if (n) sums[k] = (sums[k] || 0) + n;
+              if (n !== 0) sums[k] = (sums[k] || 0) + n;
             }
           }
         }
-
         if (!cancelled) setCumTotals(sums);
       } catch (e) {
         console.error("Cumulative compute failed:", e);
@@ -316,7 +325,9 @@ function ViewReports({ reportData, month, year }) {
       ? rows.map((row) => {
           const out = { ...(row || {}) };
           for (const k of Object.keys(out)) {
-            if (/name|centre|center/i.test(k) && (out[k] === 0 || out[k] === "0")) out[k] = "";
+            if (/name|centre|center/i.test(k) && (out[k] === 0 || out[k] === "0")) {
+              out[k] = "";
+            }
           }
           return out;
         })
