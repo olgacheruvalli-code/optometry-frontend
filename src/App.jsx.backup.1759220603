@@ -183,8 +183,7 @@ const normalizeTextNameFields = (rows) =>
 /* ========================================================================== */
 /* ========================================================================== */
 /* ========================================================================== */
-/* ========================================================================== */
-/* ViewReports (SMART hydrate: by-id, else query; FY Apr→selected, normalized)*/
+/* ViewReports (FINAL: fetch-all + per-doc hydration; correct FY cumulative)  */
 /* ========================================================================== */
 function ViewReports({ reportData, month, year }) {
   const [doc, setDoc] = useState(reportData);
@@ -209,24 +208,9 @@ function ViewReports({ reportData, month, year }) {
       try {
         setHydrating(true);
         const res = await fetch(`${API_BASE}/api/reports/${encodeURIComponent(id)}`);
-        let data = {};
-        try { data = await res.json(); } catch {}
-        if (res.ok && data && typeof data === "object") {
-          if (!cancelled) setDoc(data.doc || data);
-        } else {
-          // Fallback: query by district+institution+month+year
-          const q =
-            `district=${encodeURIComponent(reportData?.district || "")}` +
-            `&institution=${encodeURIComponent(reportData?.institution || "")}` +
-            `&month=${encodeURIComponent(reportData?.month || "")}` +
-            `&year=${encodeURIComponent(reportData?.year || "")}`;
-          const r2 = await fetch(`${API_BASE}/api/reports?${q}`);
-          const j2 = await r2.json().catch(() => ({}));
-          const arr = Array.isArray(j2?.docs) ? j2.docs : Array.isArray(j2) ? j2 : [];
-          const latest = arr.sort((a,b) =>
-            new Date(b?.updatedAt||b?.createdAt||0) - new Date(a?.updatedAt||a?.createdAt||0)
-          )[0];
-          if (!cancelled && latest) setDoc(latest);
+        const data = await res.json().catch(() => ({}));
+        if (!cancelled && res.ok && data && typeof data === "object") {
+          setDoc(data.doc || data);
         }
       } finally {
         if (!cancelled) setHydrating(false);
@@ -269,67 +253,50 @@ function ViewReports({ reportData, month, year }) {
       }
     };
 
-    // Smart hydration: try /:id first, else query by MY
-    const hydrateSmart = async (d) => {
-      const _id = d?._id || d?.id;
-      // 1) try by id
-      if (_id) {
-        try {
-          const r = await fetch(`${API_BASE}/api/reports/${encodeURIComponent(_id)}`);
-          const j = await r.json().catch(() => ({}));
-          if (r.ok && j && (j?.answers || j?.doc?.answers)) {
-            return j?.doc || j;
-          }
-        } catch {}
-      }
-      // 2) fallback by district+institution+month+year
-      const q =
-        `district=${encodeURIComponent(baseDistrict)}` +
-        `&institution=${encodeURIComponent(baseInstitution)}` +
-        `&month=${encodeURIComponent(d?.month || "")}` +
-        `&year=${encodeURIComponent(d?.year || "")}`;
+    const hydrateById = async (maybeDoc) => {
+      const _id = maybeDoc?._id || maybeDoc?.id;
+      if (!_id) return maybeDoc || {};
       try {
-        const r2 = await fetch(`${API_BASE}/api/reports?${q}`);
-        const j2 = await r2.json().catch(() => ({}));
-        const arr = Array.isArray(j2?.docs) ? j2.docs : Array.isArray(j2) ? j2 : [];
-        const latest = arr.sort((a,b) =>
-          new Date(b?.updatedAt||b?.createdAt||0) - new Date(a?.updatedAt||a?.createdAt||0)
-        )[0];
-        return latest || d || {};
+        const r = await fetch(`${API_BASE}/api/reports/${encodeURIComponent(_id)}`);
+        if (!r.ok) return maybeDoc || {};
+        const j = await r.json().catch(() => ({}));
+        return j?.doc || j || maybeDoc || {};
       } catch {
-        return d || {};
+        return maybeDoc || {};
       }
     };
 
     (async () => {
       try {
-        // Fetch all, filter locally to this institution
+        // Always fetch all reports; filter locally
         const all = await fetchList(`${API_BASE}/api/reports`);
+
+        // Only this institution in this district
         const sameInst = all.filter(
           (d) => eq(d?.district, baseDistrict) && eq(d?.institution, baseInstitution)
         );
 
         const pairs = fiscalMonthsUpTo(month, Number(year));
-        const wanted = new Set(
+        const wantedKeys = new Set(
           pairs.map((p) => `${norm(normMonth(p.month))}|${String(p.year).trim()}`)
         );
 
-        // pick latest doc per (month,year)
+        // Pick latest doc per (month,year) with normalized keys
         const latestByMY = new Map();
         for (const d of sameInst) {
           const k = `${norm(normMonth(d?.month))}|${String(d?.year ?? "").trim()}`;
-          if (!wanted.has(k)) continue;
+          if (!wantedKeys.has(k)) continue;
           const ts = Date.parse(d?.updatedAt || d?.createdAt || 0) || 0;
           const prev = latestByMY.get(k);
           const prevTs = prev ? (Date.parse(prev.updatedAt || prev.createdAt) || 0) : -Infinity;
           if (!prev || ts >= prevTs) latestByMY.set(k, d);
         }
 
-        // Hydrate each selected month (by id or query)
+        // **Hydrate each picked doc** so we get `answers`
         const picked = Array.from(latestByMY.values());
-        const hydrated = await Promise.all(picked.map(hydrateSmart));
+        const hydrated = await Promise.all(picked.map(hydrateById));
 
-        // Sum q1..qN
+        // Sum q1..qN across hydrated docs
         const sums = {};
         for (const d of hydrated) {
           const a = d?.answers || {};
