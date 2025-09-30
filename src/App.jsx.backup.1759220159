@@ -182,8 +182,7 @@ const normalizeTextNameFields = (rows) =>
 /* ========================================================================== */
 /* ========================================================================== */
 /* ========================================================================== */
-/* ========================================================================== */
-/* ViewReports (FINAL: fetch-all + per-doc hydration; correct FY cumulative)  */
+/* ViewReports (FIXED: Always fetch-all; Fiscal YTD Apr→selected; normalized) */
 /* ========================================================================== */
 function ViewReports({ reportData, month, year }) {
   const [doc, setDoc] = useState(reportData);
@@ -200,7 +199,7 @@ function ViewReports({ reportData, month, year }) {
   const baseDistrict = reportData?.district || "";
   const baseInstitution = reportData?.institution || "";
 
-  // Hydrate the selected document (full payload for current month)
+  // 1) Hydrate this specific document by ID (full payload)
   useEffect(() => {
     if (!id) return;
     let cancelled = false;
@@ -219,7 +218,7 @@ function ViewReports({ reportData, month, year }) {
     return () => { cancelled = true; };
   }, [id]);
 
-  // Fiscal YTD cumulative: April → selected month (inclusive)
+  // 2) Compute fiscal YTD cumulative (April → selected, inclusive)
   useEffect(() => {
     setCumTotals({});
     if (!month || !year || !baseDistrict || !baseInstitution) return;
@@ -227,7 +226,7 @@ function ViewReports({ reportData, month, year }) {
     let cancelled = false;
 
     const fiscalMonthsUpTo = (selMonth, selYear) => {
-      const sel = normMonth(selMonth);
+      const sel = normMonth(selMonth); // handle "Sep", "sept", etc.
       const idx = MONTHS.findIndex((m) => norm(m) === norm(sel));
       if (idx < 0) return [];
       const isJFM = (m) => {
@@ -253,22 +252,9 @@ function ViewReports({ reportData, month, year }) {
       }
     };
 
-    const hydrateById = async (maybeDoc) => {
-      const _id = maybeDoc?._id || maybeDoc?.id;
-      if (!_id) return maybeDoc || {};
-      try {
-        const r = await fetch(`${API_BASE}/api/reports/${encodeURIComponent(_id)}`);
-        if (!r.ok) return maybeDoc || {};
-        const j = await r.json().catch(() => ({}));
-        return j?.doc || j || maybeDoc || {};
-      } catch {
-        return maybeDoc || {};
-      }
-    };
-
     (async () => {
       try {
-        // Always fetch all reports; filter locally
+        // *** ALWAYS fetch all, then filter locally (backend limits/pagination safe) ***
         const all = await fetchList(`${API_BASE}/api/reports`);
 
         // Only this institution in this district
@@ -277,28 +263,23 @@ function ViewReports({ reportData, month, year }) {
         );
 
         const pairs = fiscalMonthsUpTo(month, Number(year));
-        const wantedKeys = new Set(
+        const wanted = new Set(
           pairs.map((p) => `${norm(normMonth(p.month))}|${String(p.year).trim()}`)
         );
 
-        // Pick latest doc per (month,year) with normalized keys
+        // Latest doc per (month,year); normalize doc.month & trim year
         const latestByMY = new Map();
         for (const d of sameInst) {
           const k = `${norm(normMonth(d?.month))}|${String(d?.year ?? "").trim()}`;
-          if (!wantedKeys.has(k)) continue;
+          if (!wanted.has(k)) continue;
           const ts = Date.parse(d?.updatedAt || d?.createdAt || 0) || 0;
           const prev = latestByMY.get(k);
           const prevTs = prev ? (Date.parse(prev.updatedAt || prev.createdAt) || 0) : -Infinity;
           if (!prev || ts >= prevTs) latestByMY.set(k, d);
         }
 
-        // **Hydrate each picked doc** so we get `answers`
-        const picked = Array.from(latestByMY.values());
-        const hydrated = await Promise.all(picked.map(hydrateById));
-
-        // Sum q1..qN across hydrated docs
         const sums = {};
-        for (const d of hydrated) {
+        for (const d of latestByMY.values()) {
           const a = d?.answers || {};
           for (const [k, v] of Object.entries(a)) {
             if (/^q\d+$/.test(k)) {
@@ -318,7 +299,7 @@ function ViewReports({ reportData, month, year }) {
     return () => { cancelled = true; };
   }, [baseDistrict, baseInstitution, month, year]);
 
-  // Render fields
+  // pull fields for render
   const {
     answers: answersRaw = {},
     cumulative: cumulativeFromServer = {},
@@ -329,6 +310,7 @@ function ViewReports({ reportData, month, year }) {
     updatedAt,
   } = doc || {};
 
+  // robust table fields
   const normalizeTextNameFields = (rows) =>
     Array.isArray(rows)
       ? rows.map((row) => {
@@ -345,7 +327,7 @@ function ViewReports({ reportData, month, year }) {
     visionCenter || doc?.visioncentre || doc?.vision_centre || []
   );
 
-  // Fallback to server cumulative/answers if FY couldn't be built
+  // server cumulative (fallback only)
   const cumSrc =
     cumulativeFromServer && Object.keys(cumulativeFromServer).length
       ? cumulativeFromServer
@@ -430,7 +412,7 @@ function ViewReports({ reportData, month, year }) {
                 const key = `q${qNumber}`;
                 const monthVal = Number(answersRaw[key] ?? 0);
 
-                // Prefer hydrated FY totals; fall back to server cumulative/answers
+                // Prefer computed fiscal YTD; fall back to server cumulative/answers
                 const cumVal =
                   cumTotals[key] !== undefined
                     ? Number(cumTotals[key] || 0)
