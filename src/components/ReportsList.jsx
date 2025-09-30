@@ -1,4 +1,5 @@
 import React, { useEffect, useState } from 'react';
+import API_BASE from "../apiBase";
 
 export default function ReportsList({ onSelect }) {
   const [reports, setReports] = useState([]);
@@ -6,7 +7,7 @@ export default function ReportsList({ onSelect }) {
   const [error, setError] = useState(null);
 
   useEffect(() => {
-    fetch('/api/reports')
+    fetch(`${API_BASE}/api/reports`)
       .then(res => {
         if (!res.ok) throw new Error(`HTTP ${res.status}`);
         return res.json();
