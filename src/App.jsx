@@ -788,6 +788,7 @@ function App() {
 
   const qDefs = useMemo(() => orderedQuestions(sections), []);
   const selectedDistrict = user?.district || "Kozhikode";
+console.log("Kozhikode institutions (last 3):", (districtInstitutions["Kozhikode"] || []).slice(-3));
 
   const institutionNamesMemo = useMemo(
     () =>
