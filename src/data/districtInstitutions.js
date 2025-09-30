@@ -43,7 +43,7 @@ const baseInstitutions = {
     "CHC ulliery", "General Hospital Kozhikod", "CHC Thalakkulathur","CHC Thiruvallur" ,"CHC Olavanna",
     "Taluk Hospital Farook", "CHC Cheruvannur", "CHC Thamarassery",
     "Taluk Hospital Koyilandy", "CHC Thiruvangoor", "Taluk Hospital Balussery", "PHC Meppayur",
-    "CHC Melady", "CHC Valayam", "Taluk Hospital Kuttiadi","Taluk Hospital Nadapuram","CHC Cheruvadi"
+    "CHC Melady", "CHC Valayam", "Taluk Hospital Kuttiadi","Taluk Hospital Nadapuram","CHC Cheruvadi","District Mobile Unit"
   ],
   Wayanad: [
     "CHC Meenangdi", "CHC Panamaram", "THQH Sulthan Bathery", "District Hospital Mananthavady"
