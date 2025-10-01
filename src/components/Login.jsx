@@ -1,4 +1,4 @@
-// src/components/Login.jsx
+// src/components/Login.jsx (BUILD MARKER v4)
 import React, { useState } from "react";
 import API_BASE from "../apiBase";
 import { districtInstitutions } from "../data/districtInstitutions";
@@ -13,7 +13,6 @@ export default function Login({ onLogin, onShowRegister }) {
   const [error, setError] = useState("");
   const [isLoading, setIsLoading] = useState(false);
 
-  // Clean, de-duped, sorted list; exclude only DOC/DC
   const institutionOptions = React.useMemo(() => {
     if (!district) return [];
     const raw = Array.isArray(districtInstitutions[district])
@@ -25,7 +24,8 @@ export default function Login({ onLogin, onShowRegister }) {
     for (const name of raw) {
       const s = String(name || "").trim();
       if (!s) continue;
-      if (/^doc\s|^dc\s/i.test(s)) continue; // remove only DOC/DC
+      // ONLY skip "DOC ..." / "DC ..." at start
+      if (/^\s*(doc|dc)\b/i.test(s)) continue;
       const key = s.toLowerCase();
       if (!seen.has(key)) {
         seen.add(key);
@@ -33,11 +33,20 @@ export default function Login({ onLogin, onShowRegister }) {
       }
     }
 
-    cleaned.sort((a, b) =>
-      a.localeCompare(b, undefined, { sensitivity: "base" })
+    // Force-include DMU if present in raw (handles odd spaces/unicode/case)
+    const hasDMUinRaw = raw.some(n =>
+      String(n||"").toLowerCase().replace(/\s+/g," ").includes("district mobile unit")
     );
+    const hasDMUcleaned = cleaned.some(n =>
+      String(n||"").toLowerCase().replace(/\s+/g," ") === "district mobile unit"
+    );
+    if (hasDMUinRaw && !hasDMUcleaned) {
+      cleaned.push("District Mobile Unit");
+    }
 
-    // console.log("Institutions (last 3):", cleaned.slice(-3));
+    cleaned.sort((a,b)=>a.localeCompare(b, undefined, {sensitivity:"base"}));
+
+    console.log("[Login v4] Institutions for", district, cleaned);
     return cleaned;
   }, [district]);
 
@@ -50,18 +59,11 @@ export default function Login({ onLogin, onShowRegister }) {
       setError("Incorrect password.");
       return;
     }
+    setError(""); setIsLoading(true);
 
-    setError("");
-    setIsLoading(true);
-
-    const payload = {
-      institution: institution.trim(),
-      district: district.trim(),
-      password,
-    };
-
+    const payload = { institution: institution.trim(), district: district.trim(), password };
     const controller = new AbortController();
-    const t = setTimeout(() => controller.abort(), 12_000);
+    const t = setTimeout(() => controller.abort(), 12000);
 
     try {
       const res = await fetch(`${API_BASE}/api/login`, {
@@ -70,64 +72,41 @@ export default function Login({ onLogin, onShowRegister }) {
         body: JSON.stringify(payload),
         signal: controller.signal,
       });
-
       const raw = await res.text();
-      let data = {};
-      try { data = raw ? JSON.parse(raw) : {}; } catch {}
-
-      if (!res.ok) {
-        const msg = data?.error || raw || `HTTP ${res.status} ${res.statusText || ""}`.trim();
-        throw new Error(msg);
-      }
+      let data = {}; try { data = raw ? JSON.parse(raw) : {}; } catch {}
+      if (!res.ok) throw new Error(data?.error || raw || `HTTP ${res.status} ${res.statusText||""}`.trim());
 
       const user = data.user || data;
-      if (!user || typeof user !== "object" || !user.district || !user.institution) {
-        throw new Error("Malformed login response from server.");
-      }
-
+      if (!user?.district || !user?.institution) throw new Error("Malformed login response from server.");
       onLogin(user);
     } catch (err) {
-      const msg = err?.name === "AbortError"
-        ? "Login request timed out. Please try again."
-        : (err?.message || "Login failed.");
-      setError(msg);
+      setError(err?.name==="AbortError" ? "Login request timed out. Please try again." : (err?.message || "Login failed."));
       console.error("Login error:", err);
     } finally {
-      clearTimeout(t);
-      setIsLoading(false);
+      clearTimeout(t); setIsLoading(false);
     }
   };
 
-  const handleGuestLogin = () => {
-    onLogin({ district: "Guest", institution: "Guest User", isGuest: true });
-  };
+  const handleGuestLogin = () => onLogin({ district:"Guest", institution:"Guest User", isGuest:true });
 
   return (
     <div className="min-h-screen flex items-center justify-center bg-gradient-to-b from-[#e9f1f8] to-[#f7fafc] font-serif p-4">
       <div className="flex flex-col md:flex-row bg-white rounded-2xl shadow-xl overflow-hidden w-full max-w-5xl border border-gray-100">
         {/* Left: Form */}
         <div className="w-full md:w-1/2 p-6 md:p-8 space-y-4 bg-white">
-          <h2 className="text-2xl md:text-3xl font-bold text-center text-[#134074]">
-            Optometry Monthly Reporting
-          </h2>
-
-          <div className="text-[10px] text-gray-500 text-center break-all">
-            API: {API_BASE}
-          </div>
+          <h2 className="text-2xl md:text-3xl font-bold text-center text-[#134074]">Optometry Monthly Reporting</h2>
+          <div className="text-[10px] text-gray-500 text-center break-all">API: {API_BASE} • Login v4</div>
 
           {/* District */}
           <label className="block text-sm text-gray-700">District</label>
           <select
             value={district}
-            onChange={(e) => {
-              setDistrict(e.target.value);
-              setInstitution(""); // refresh institution list
-              setError("");
-            }}
+            onChange={(e)=>{ setDistrict(e.target.value); setInstitution(""); setError(""); }}
             className="w-full px-3 py-2 rounded bg-gray-100 text-gray-800 focus:outline-none"
+            data-testid="district-select"
           >
             <option value="">Select District</option>
-            {Object.keys(districtInstitutions).map((d) => (
+            {Object.keys(districtInstitutions).map((d)=>(
               <option key={d} value={d}>{d}</option>
             ))}
           </select>
@@ -136,23 +115,29 @@ export default function Login({ onLogin, onShowRegister }) {
           <label className="block text-sm text-gray-700">Institution</label>
           <select
             value={institution}
-            onChange={(e) => { setInstitution(e.target.value); setError(""); }}
+            onChange={(e)=>{ setInstitution(e.target.value); setError(""); }}
             disabled={!district}
             className="w-full px-3 py-2 rounded bg-gray-100 text-gray-800 focus:outline-none disabled:opacity-50"
+            data-testid="institution-select"
           >
             <option value="">Select Institution</option>
-            {institutionOptions.map((i) => (
-              <option key={i} value={i}>{i}</option>
+            {institutionOptions.map((i)=>(
+              <option key={i} value={i} title={i}>{i}</option>
             ))}
           </select>
+
+          {/* On-page debug of the same list used by the <select> */}
+          <div className="text-[10px] text-gray-500 mt-1" data-debug-institutions>
+            Institutions ({institutionOptions.length}): {institutionOptions.join(" | ")}
+          </div>
 
           {/* Password */}
           <label className="block text-sm text-gray-700">Password</label>
           <input
             type="password"
             value={password}
-            onChange={(e) => { setPassword(e.target.value); setError(""); }}
-            onKeyDown={(e) => { if (e.key === "Enter") handleLogin(); }}
+            onChange={(e)=>{ setPassword(e.target.value); setError(""); }}
+            onKeyDown={(e)=>{ if (e.key === "Enter") handleLogin(); }}
             className="w-full px-3 py-2 rounded bg-gray-100 text-gray-800 focus:outline-none"
             autoComplete="current-password"
           />
@@ -168,11 +153,7 @@ export default function Login({ onLogin, onShowRegister }) {
           </button>
 
           <div className="text-center mt-2">
-            <button
-              onClick={onShowRegister}
-              className="text-sm text-blue-600 hover:underline"
-              type="button"
-            >
+            <button onClick={onShowRegister} className="text-sm text-blue-600 hover:underline" type="button">
               New Optometrist? Register here
             </button>
           </div>
@@ -181,11 +162,7 @@ export default function Login({ onLogin, onShowRegister }) {
 
           {/* Guest Login */}
           <div className="text-center">
-            <button
-              onClick={handleGuestLogin}
-              className="text-sm text-gray-700 border border-gray-400 px-4 py-2 rounded hover:bg-gray-100"
-              type="button"
-            >
+            <button onClick={handleGuestLogin} className="text-sm text-gray-700 border border-gray-400 px-4 py-2 rounded hover:bg-gray-100" type="button">
               👁️ Continue as Guest
             </button>
           </div>
@@ -193,11 +170,7 @@ export default function Login({ onLogin, onShowRegister }) {
 
         {/* Right: Image */}
         <div className="w-full md:w-1/2 bg-[#0b2e59]/5">
-          <img
-            src={rightImage}
-            alt="Optometrist examining patient"
-            className="object-cover w-full h-full"
-          />
+          <img src={rightImage} alt="Optometrist examining patient" className="object-cover w-full h-full" />
         </div>
       </div>
     </div>
