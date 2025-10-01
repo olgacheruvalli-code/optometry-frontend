@@ -1,4 +1,4 @@
-// src/components/Login.jsx (BUILD MARKER v6)
+// src/components/Login.jsx (BUILD MARKER v7)
 import React, { useEffect, useState } from "react";
 import API_BASE from "../apiBase";
 import { districtInstitutions } from "../data/districtInstitutions";
@@ -6,14 +6,14 @@ import rightImage from "../assets/optometrist-right.png";
 
 const REQUIRED_PASSWORD = "123";
 
-// helper to find the canonical district key even if value has extra spaces/case
+// Resolve canonical district key (case/space-insensitive)
 function resolveDistrictKey(input) {
   const q = String(input || "").trim().toLowerCase();
   const keys = Object.keys(districtInstitutions || {});
   for (const k of keys) {
-    if (k.toLowerCase().trim() === q) return k; // exact normalized match
+    if (k.toLowerCase().trim() === q) return k;
   }
-  return ""; // not found
+  return "";
 }
 
 export default function Login({ onLogin, onShowRegister }) {
@@ -22,6 +22,14 @@ export default function Login({ onLogin, onShowRegister }) {
   const [password, setPassword] = useState("");
   const [error, setError] = useState("");
   const [isLoading, setIsLoading] = useState(false);
+
+  // ✅ Auto-select a default district on first render
+  useEffect(() => {
+    if (!district) {
+      const keys = Object.keys(districtInstitutions || {});
+      if (keys.length) setDistrict(keys[0]); // pick the first district automatically
+    }
+  }, [district]);
 
   const institutionOptions = React.useMemo(() => {
     const canonical = resolveDistrictKey(district);
@@ -35,7 +43,7 @@ export default function Login({ onLogin, onShowRegister }) {
     for (const name of raw) {
       const s = String(name || "").trim();
       if (!s) continue;
-      if (/^\s*(doc|dc)\b/i.test(s)) continue; // only skip DOC/DC at start
+      if (/^\s*(doc|dc)\b/i.test(s)) continue; // skip only DOC/DC at start
       const key = s.toLowerCase();
       if (!seen.has(key)) {
         seen.add(key);
@@ -43,7 +51,7 @@ export default function Login({ onLogin, onShowRegister }) {
       }
     }
 
-    // Force-include District Mobile Unit if present in raw with odd spacing/case
+    // Force-include DMU if it's in raw but missed due to odd spaces/case
     const rawHasDMU = raw.some(n =>
       String(n||"").toLowerCase().replace(/\s+/g," ").includes("district mobile unit")
     );
@@ -56,11 +64,11 @@ export default function Login({ onLogin, onShowRegister }) {
     return cleaned;
   }, [district]);
 
-  // expose runtime probe so we can confirm exactly what's used AFTER you pick a district
+  // Probe
   useEffect(() => {
     const canonical = resolveDistrictKey(district);
     window.__loginProbe = {
-      build: "v6",
+      build: "v7",
       selectedDistrictRaw: district,
       selectedDistrictCanonical: canonical,
       raw:
@@ -69,7 +77,7 @@ export default function Login({ onLogin, onShowRegister }) {
           : [],
       options: institutionOptions.slice(),
     };
-    console.log("[Login v6]", {
+    console.log("[Login v7]", {
       selectedDistrictRaw: district,
       selectedDistrictCanonical: canonical,
       options: institutionOptions,
@@ -86,19 +94,12 @@ export default function Login({ onLogin, onShowRegister }) {
       setError("Incorrect password.");
       return;
     }
+    setError(""); setIsLoading(true);
 
-    setError("");
-    setIsLoading(true);
-
-    const payload = {
-      district: canonical,                // use canonical key
-      institution: institution.trim(),
-      password,
-    };
+    const payload = { district: canonical, institution: institution.trim(), password };
 
     const controller = new AbortController();
     const t = setTimeout(() => controller.abort(), 12000);
-
     try {
       const res = await fetch(`${API_BASE}/api/login`, {
         method: "POST",
@@ -107,9 +108,7 @@ export default function Login({ onLogin, onShowRegister }) {
         signal: controller.signal,
       });
       const raw = await res.text();
-      let data = {};
-      try { data = raw ? JSON.parse(raw) : {}; } catch {}
-
+      let data = {}; try { data = raw ? JSON.parse(raw) : {}; } catch {}
       if (!res.ok) throw new Error(data?.error || raw || `HTTP ${res.status} ${res.statusText||""}`.trim());
 
       const user = data.user || data;
@@ -119,8 +118,7 @@ export default function Login({ onLogin, onShowRegister }) {
       setError(err?.name==="AbortError" ? "Login request timed out. Please try again." : (err?.message || "Login failed."));
       console.error("Login error:", err);
     } finally {
-      clearTimeout(t);
-      setIsLoading(false);
+      clearTimeout(t); setIsLoading(false);
     }
   };
 
@@ -136,7 +134,7 @@ export default function Login({ onLogin, onShowRegister }) {
           </h2>
 
           <div className="text-[10px] text-gray-500 text-center break-all">
-            API: {API_BASE} • Login v6
+            API: {API_BASE} • Login v7
           </div>
 
           {/* District */}
@@ -144,7 +142,7 @@ export default function Login({ onLogin, onShowRegister }) {
           <select
             value={district}
             onChange={(e) => {
-              setDistrict(e.target.value.trim()); // <- trim input
+              setDistrict(e.target.value.trim());
               setInstitution("");
               setError("");
             }}
@@ -172,7 +170,7 @@ export default function Login({ onLogin, onShowRegister }) {
             ))}
           </select>
 
-          {/* Visible debug of the EXACT list used by the <select> */}
+          {/* Debug line of exactly what's rendered */}
           <div className="text-[10px] text-gray-500 mt-1" data-debug-institutions>
             Institutions ({institutionOptions.length}): {institutionOptions.join(" | ")}
           </div>
