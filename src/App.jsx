@@ -190,7 +190,7 @@ function ViewReports({ reportData, month, year }) {
   const [doc, setDoc] = useState(reportData);
   const [hydrating, setHydrating] = useState(false);
   const [cumTotals, setCumTotals] = useState({});
-  const flatRows = useMemo(() => buildFlatRows(sections), []);
+const [cumFallback, setCumFallback] = useState(null);  const flatRows = useMemo(() => buildFlatRows(sections), []);
 
   const id = reportData?._id || reportData?.id;
 
