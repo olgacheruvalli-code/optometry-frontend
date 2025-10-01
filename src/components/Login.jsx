@@ -1,10 +1,20 @@
-// src/components/Login.jsx (BUILD MARKER v5)
+// src/components/Login.jsx (BUILD MARKER v6)
 import React, { useEffect, useState } from "react";
 import API_BASE from "../apiBase";
 import { districtInstitutions } from "../data/districtInstitutions";
 import rightImage from "../assets/optometrist-right.png";
 
 const REQUIRED_PASSWORD = "123";
+
+// helper to find the canonical district key even if value has extra spaces/case
+function resolveDistrictKey(input) {
+  const q = String(input || "").trim().toLowerCase();
+  const keys = Object.keys(districtInstitutions || {});
+  for (const k of keys) {
+    if (k.toLowerCase().trim() === q) return k; // exact normalized match
+  }
+  return ""; // not found
+}
 
 export default function Login({ onLogin, onShowRegister }) {
   const [district, setDistrict] = useState("");
@@ -13,11 +23,11 @@ export default function Login({ onLogin, onShowRegister }) {
   const [error, setError] = useState("");
   const [isLoading, setIsLoading] = useState(false);
 
-  // Build cleaned list (only skip DOC/DC at the *start*)
   const institutionOptions = React.useMemo(() => {
-    if (!district) return [];
-    const raw = Array.isArray(districtInstitutions[district])
-      ? districtInstitutions[district]
+    const canonical = resolveDistrictKey(district);
+    if (!canonical) return [];
+    const raw = Array.isArray(districtInstitutions[canonical])
+      ? districtInstitutions[canonical]
       : [];
 
     const seen = new Set();
@@ -33,35 +43,42 @@ export default function Login({ onLogin, onShowRegister }) {
       }
     }
 
-    // If raw includes a DMU-like string (any spacing/case), force-include canonical label.
+    // Force-include District Mobile Unit if present in raw with odd spacing/case
     const rawHasDMU = raw.some(n =>
-      String(n || "").toLowerCase().replace(/\s+/g, " ").includes("district mobile unit")
+      String(n||"").toLowerCase().replace(/\s+/g," ").includes("district mobile unit")
     );
     const cleanedHasDMU = cleaned.some(n =>
-      String(n || "").toLowerCase().replace(/\s+/g, " ") === "district mobile unit"
+      String(n||"").toLowerCase().replace(/\s+/g," ") === "district mobile unit"
     );
-    if (rawHasDMU && !cleanedHasDMU) {
-      cleaned.push("District Mobile Unit");
-    }
+    if (rawHasDMU && !cleanedHasDMU) cleaned.push("District Mobile Unit");
 
-    cleaned.sort((a, b) => a.localeCompare(b, undefined, { sensitivity: "base" }));
+    cleaned.sort((a,b)=>a.localeCompare(b, undefined, {sensitivity:"base"}));
     return cleaned;
   }, [district]);
 
-  // Global probe to confirm exactly what's being used by THIS component
+  // expose runtime probe so we can confirm exactly what's used AFTER you pick a district
   useEffect(() => {
+    const canonical = resolveDistrictKey(district);
     window.__loginProbe = {
-      build: "v5",
-      district,
-      raw: Array.isArray(districtInstitutions[district]) ? districtInstitutions[district] : [],
+      build: "v6",
+      selectedDistrictRaw: district,
+      selectedDistrictCanonical: canonical,
+      raw:
+        canonical && Array.isArray(districtInstitutions[canonical])
+          ? districtInstitutions[canonical]
+          : [],
       options: institutionOptions.slice(),
     };
-    // eslint-disable-next-line no-console
-    console.log("[Login v5] district:", district, "| options:", institutionOptions);
+    console.log("[Login v6]", {
+      selectedDistrictRaw: district,
+      selectedDistrictCanonical: canonical,
+      options: institutionOptions,
+    });
   }, [district, institutionOptions]);
 
   const handleLogin = async () => {
-    if (!district || !institution || !password) {
+    const canonical = resolveDistrictKey(district);
+    if (!canonical || !institution || !password) {
       setError("Please select district, institution, and enter password.");
       return;
     }
@@ -74,13 +91,13 @@ export default function Login({ onLogin, onShowRegister }) {
     setIsLoading(true);
 
     const payload = {
+      district: canonical,                // use canonical key
       institution: institution.trim(),
-      district: district.trim(),
       password,
     };
 
     const controller = new AbortController();
-    const t = setTimeout(() => controller.abort(), 12_000);
+    const t = setTimeout(() => controller.abort(), 12000);
 
     try {
       const res = await fetch(`${API_BASE}/api/login`, {
@@ -89,28 +106,17 @@ export default function Login({ onLogin, onShowRegister }) {
         body: JSON.stringify(payload),
         signal: controller.signal,
       });
-
       const raw = await res.text();
       let data = {};
       try { data = raw ? JSON.parse(raw) : {}; } catch {}
 
-      if (!res.ok) {
-        const msg = data?.error || raw || `HTTP ${res.status} ${res.statusText || ""}`.trim();
-        throw new Error(msg);
-      }
+      if (!res.ok) throw new Error(data?.error || raw || `HTTP ${res.status} ${res.statusText||""}`.trim());
 
       const user = data.user || data;
-      if (!user?.district || !user?.institution) {
-        throw new Error("Malformed login response from server.");
-      }
-
+      if (!user?.district || !user?.institution) throw new Error("Malformed login response from server.");
       onLogin(user);
     } catch (err) {
-      const msg =
-        err?.name === "AbortError"
-          ? "Login request timed out. Please try again."
-          : (err?.message || "Login failed.");
-      setError(msg);
+      setError(err?.name==="AbortError" ? "Login request timed out. Please try again." : (err?.message || "Login failed."));
       console.error("Login error:", err);
     } finally {
       clearTimeout(t);
@@ -118,9 +124,7 @@ export default function Login({ onLogin, onShowRegister }) {
     }
   };
 
-  const handleGuestLogin = () => {
-    onLogin({ district: "Guest", institution: "Guest User", isGuest: true });
-  };
+  const handleGuestLogin = () => onLogin({ district:"Guest", institution:"Guest User", isGuest:true });
 
   return (
     <div className="min-h-screen flex items-center justify-center bg-gradient-to-b from-[#e9f1f8] to-[#f7fafc] font-serif p-4">
@@ -132,7 +136,7 @@ export default function Login({ onLogin, onShowRegister }) {
           </h2>
 
           <div className="text-[10px] text-gray-500 text-center break-all">
-            API: {API_BASE} • Login v5
+            API: {API_BASE} • Login v6
           </div>
 
           {/* District */}
@@ -140,8 +144,8 @@ export default function Login({ onLogin, onShowRegister }) {
           <select
             value={district}
             onChange={(e) => {
-              setDistrict(e.target.value);
-              setInstitution(""); // refresh institution list
+              setDistrict(e.target.value.trim()); // <- trim input
+              setInstitution("");
               setError("");
             }}
             className="w-full px-3 py-2 rounded bg-gray-100 text-gray-800 focus:outline-none"
@@ -158,7 +162,7 @@ export default function Login({ onLogin, onShowRegister }) {
           <select
             value={institution}
             onChange={(e) => { setInstitution(e.target.value); setError(""); }}
-            disabled={!district}
+            disabled={!resolveDistrictKey(district)}
             className="w-full px-3 py-2 rounded bg-gray-100 text-gray-800 focus:outline-none disabled:opacity-50"
             data-testid="institution-select"
           >
@@ -168,7 +172,7 @@ export default function Login({ onLogin, onShowRegister }) {
             ))}
           </select>
 
-          {/* Visible debug: the SAME array used above */}
+          {/* Visible debug of the EXACT list used by the <select> */}
           <div className="text-[10px] text-gray-500 mt-1" data-debug-institutions>
             Institutions ({institutionOptions.length}): {institutionOptions.join(" | ")}
           </div>
@@ -188,18 +192,14 @@ export default function Login({ onLogin, onShowRegister }) {
 
           <button
             onClick={handleLogin}
-            disabled={!district || !institution || !password || isLoading}
+            disabled={!resolveDistrictKey(district) || !institution || !password || isLoading}
             className="w-full py-2 bg-green-700 hover:bg-green-800 text-white rounded-md shadow-md transition disabled:opacity-50"
           >
             {isLoading ? "Logging in..." : "Login"}
           </button>
 
           <div className="text-center mt-2">
-            <button
-              onClick={onShowRegister}
-              className="text-sm text-blue-600 hover:underline"
-              type="button"
-            >
+            <button onClick={onShowRegister} className="text-sm text-blue-600 hover:underline" type="button">
               New Optometrist? Register here
             </button>
           </div>
@@ -208,11 +208,7 @@ export default function Login({ onLogin, onShowRegister }) {
 
           {/* Guest Login */}
           <div className="text-center">
-            <button
-              onClick={handleGuestLogin}
-              className="text-sm text-gray-700 border border-gray-400 px-4 py-2 rounded hover:bg-gray-100"
-              type="button"
-            >
+            <button onClick={handleGuestLogin} className="text-sm text-gray-700 border border-gray-400 px-4 py-2 rounded hover:bg-gray-100" type="button">
               👁️ Continue as Guest
             </button>
           </div>
@@ -220,11 +216,7 @@ export default function Login({ onLogin, onShowRegister }) {
 
         {/* Right: Image */}
         <div className="w-full md:w-1/2 bg-[#0b2e59]/5">
-          <img
-            src={rightImage}
-            alt="Optometrist examining patient"
-            className="object-cover w-full h-full"
-          />
+          <img src={rightImage} alt="Optometrist examining patient" className="object-cover w-full h-full" />
         </div>
       </div>
     </div>
