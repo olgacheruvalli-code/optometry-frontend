@@ -1470,3 +1470,5 @@ console.log("Kozhikode institutions (last 3):", (districtInstitutions["Kozhikode
 
 export default App;
 
+
+// cache-bust 2025-10-01T01:37:03Z
