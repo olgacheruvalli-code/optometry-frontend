@@ -1,9 +1,11 @@
+
+
 // src/App.jsx
 import React, {
   useEffect,
   useLayoutEffect, // ok even if unused in this file
   useMemo,
-  useRef,          // ok even if unused in this file
+  useRef, // ok even if unused in this file
   useState,
 } from "react";
 import API_BASE from "./apiBase";
@@ -15,6 +17,7 @@ import MonthYearSelector from "./components/MonthYearSelector";
 import EyeBankTable from "./components/EyeBankTable";
 import VisionCenterTable from "./components/VisionCenterTable";
 import QuestionInput from "./components/QuestionInput";
+
 import Login from "./components/Login";
 import MenuBar from "./components/MenuBar";
 import ReportsList from "./components/ReportsList";
@@ -22,13 +25,33 @@ import ViewInstitutionWiseReport from "./components/ViewInstitutionWiseReport";
 import ViewDistrictTables from "./components/ViewDistrictTables";
 import EditReport from "./components/EditReport";
 import Register from "./components/Register";
+import AdminApprovals from "./components/AdminApprovals";
+import { startFlute, stopFlute } from "./utils/sound";
 import EditGate from "./components/EditGate";
+import SearchReports from "./components/SearchReports";
+import AmblyopiaForm from "./components/Amblyopia/AmblyopiaForm";
+import AmblyopiaView from "./components/Amblyopia/AmblyopiaView";
+import AmblyopiaAnalytics from "./components/Amblyopia/AmblyopiaAnalytics";
 import TestVisionCenter from "./components/TestVisionCenter";
+import RegistersManager from "./components/Registers/RegistersManager";
+
+// Wake up Render backend when app starts
+fetch("https://optometry-backend-iiuk.onrender.com/api/ping").catch(() => {});
 
 /* ----------------------------- Month constants ---------------------------- */
 const MONTHS = [
-  "April", "May", "June", "July", "August", "September",
-  "October", "November", "December", "January", "February", "March",
+  "April",
+  "May",
+  "June",
+  "July",
+  "August",
+  "September",
+  "October",
+  "November",
+  "December",
+  "January",
+  "February",
+  "March",
 ];
 
 /* -------------------------------------------------------------------------- */
@@ -36,12 +59,14 @@ const MONTHS = [
 /* -------------------------------------------------------------------------- */
 
 /** Return an array of question defs from a block that might use `questions` or `rows`. */
-const getQs = (blk) =>
-  Array.isArray(blk?.questions)
+const getQs = (blk) => {
+  if (blk?.table && !/eye\s*bank/i.test(blk?.title || "")) return [];
+  return Array.isArray(blk?.questions)
     ? blk.questions
     : Array.isArray(blk?.rows)
     ? blk.rows
     : [];
+};
 
 /** Build flat rows in display order (headers, subheaders, q-rows, and table markers). */
 function buildFlatRows(secs) {
@@ -65,7 +90,8 @@ function buildFlatRows(secs) {
     // special tables (match both "center" and "centre")
     if (sec?.table) {
       if (/eye\s*bank/i.test(titleStr)) out.push({ kind: "eyeBankTable" });
-      if (/vision\s*cent(e|)r(e|)/i.test(titleStr)) out.push({ kind: "visionCenterTable" });
+      if (/vision\s*cent(e|)r(e|)/i.test(titleStr))
+        out.push({ kind: "visionCenterTable" });
     }
   }
   return out;
@@ -76,61 +102,16 @@ function orderedQuestions(secs) {
   return buildFlatRows(secs).filter((r) => r.kind === "q").map((r) => r.row);
 }
 
-const KEYS = Array.from({ length: 84 }, (_, i) => `q${i + 1}`);
-const Q_ROWS = orderedQuestions(sections);
+const KEYS = Array.from({ length: 86 }, (_, i) => `q${i + 1}`);
 
-/** Create an object with q1..q84 = 0 */
-const makeEmptyAnswers = () => KEYS.reduce((a, k) => ((a[k] = 0), a), {});
-
-/** Ensure an object has numeric q1..q84 entries (missing -> 0, non-numeric -> 0). */
-const fill84 = (obj) => {
-  const base = { ...(obj || {}) };
-  for (const k of KEYS) {
-    const v = base[k];
-    base[k] = typeof v === "number" ? (Number.isFinite(v) ? v : 0) : Number(v ?? 0) || 0;
-  }
-  return base;
-};
-
-/** Normalize month names (case/abbr tolerant). */
-const normMonth = (m) => {
-  if (!m) return m;
-  const s = String(m).trim().toLowerCase();
-  const map = {
-    january: "January", jan: "January",
-    february: "February", feb: "February",
-    march: "March", mar: "March",
-    april: "April", apr: "April",
-    may: "May",
-    june: "June", jun: "June",
-    july: "July", jul: "July",
-    august: "August", aug: "August",
-    september: "September", sep: "September", sept: "September",
-    october: "October", oct: "October",
-    november: "November", nov: "November",
-    december: "December", dec: "December",
-  };
-  return map[s] || m;
-};
-
-/** Build ONLY non-zero q# keys (q1..qN), respecting the *display order* in `secs`. */
-function buildAnswersPartial(answers, secs) {
-  const qs = orderedQuestions(secs);
-  const out = {};
-  for (let i = 0; i < qs.length; i++) {
-    const id = qs[i]?.id;
-    if (!id) continue;
-    const raw = answers[id];
-    let v = 0;
-    if (raw && typeof raw === "object") {
-      v = Object.values(raw).reduce((s, x) => s + (Number(x) || 0), 0);
-    } else {
-      v = Number(raw || 0);
-    }
-    if (v > 0) out[`q${i + 1}`] = String(v); // keep as string to match earlier cURL behavior
-  }
-  return out;
-}
+/**
+ * ✅ CANONICAL / FROZEN q1..q86 DEF LIST
+ * Single source of truth for q1..q86 order (matches ViewReports order)
+ */
+const Q_DEFS_84 = buildFlatRows(sections)
+  .filter((x) => x.kind === "q")
+  .map((x) => x.row)
+  .slice(0, 86);
 
 /** Convert table rows: keep names as strings; numeric-looking cells -> numbers; null/undefined -> "" */
 const sanitizeTableArray = (arr) =>
@@ -169,7 +150,10 @@ const normalizeTextNameFields = (rows) =>
     ? rows.map((row) => {
         const out = { ...(row || {}) };
         for (const k of Object.keys(out)) {
-          if (/name|centre|center/i.test(k) && (out[k] === 0 || out[k] === "0")) {
+          if (
+            /name|centre|center/i.test(k) &&
+            (out[k] === 0 || out[k] === "0")
+          ) {
             out[k] = "";
           }
         }
@@ -177,44 +161,59 @@ const normalizeTextNameFields = (rows) =>
       })
     : [];
 
-
-/* ========================================================================== */
-/* ========================================================================== */
-/* ========================================================================== */
-/* ========================================================================== */
-/* ========================================================================== */
-/* ========================================================================== */
-/* ViewReports (SMART hydrate: by-id, else query; FY Apr→selected, normalized)*/
-/* ========================================================================== */
 function ViewReports({ reportData, month, year }) {
   const [doc, setDoc] = useState(reportData);
   const [hydrating, setHydrating] = useState(false);
   const [cumTotals, setCumTotals] = useState({});
-const [cumFallback, setCumFallback] = useState(null);  const flatRows = useMemo(() => buildFlatRows(sections), []);
+  const [cumFallback, setCumFallback] = useState(null); // local FY fallback
+  const flatRows = useMemo(() => buildFlatRows(sections), []);
 
   const id = reportData?._id || reportData?.id;
-
-  // helpers
-  const norm = (s) => String(s || "").trim().toLowerCase();
-  const eq = (a, b) => norm(a) === norm(b);
-
   const baseDistrict = reportData?.district || "";
   const baseInstitution = reportData?.institution || "";
 
-  // Hydrate the selected document (full payload for current month)
+  // --- helper: how we interpret each q-key for ONE month (mirrors render logic) ---
+  const getMonthValueForKey = (answersObj = {}, key) => {
+    let raw = answersObj[key];
+
+    // Special glaucoma "Screened" fix:
+    // historically some reports stored it in q36 instead of q34.
+    // We treat q36 as:
+    //   - its own value, OR
+    //   - if zero but q34 is non-zero, we take q34 instead.
+    if (key === "q36") {
+      const altMonth = answersObj?.q34;
+      const valNum = Number(raw ?? 0) || 0;
+      const altNum = Number(altMonth ?? 0) || 0;
+      if (!valNum && altNum) {
+        raw = altMonth;
+      }
+    }
+
+    return Number(raw ?? 0) || 0;
+  };
+
+  // Hydrate the selected document (so month column shows full data)
   useEffect(() => {
     if (!id) return;
     let cancelled = false;
     (async () => {
       try {
         setHydrating(true);
-        const res = await fetch(`${API_BASE}/api/reports/${encodeURIComponent(id)}`);
-        let data = {};
-        try { data = await res.json(); } catch {}
-        if (res.ok && data && typeof data === "object") {
-          if (!cancelled) setDoc(data.doc || data);
+        const res = await fetch(
+          `${API_BASE}/api/reports/${encodeURIComponent(id)}`
+        );
+        const data = await res.json().catch(() => ({}));
+        if (
+          !cancelled &&
+          res.ok &&
+          data &&
+          typeof data === "object" &&
+          (data.doc || data).answers
+        ) {
+          setDoc(data.doc || data);
         } else {
-          // Fallback: query by district+institution+month+year
+          // Fallback: query by MY
           const q =
             `district=${encodeURIComponent(reportData?.district || "")}` +
             `&institution=${encodeURIComponent(reportData?.institution || "")}` +
@@ -222,9 +221,15 @@ const [cumFallback, setCumFallback] = useState(null);  const flatRows = useMemo(
             `&year=${encodeURIComponent(reportData?.year || "")}`;
           const r2 = await fetch(`${API_BASE}/api/reports?${q}`);
           const j2 = await r2.json().catch(() => ({}));
-          const arr = Array.isArray(j2?.docs) ? j2.docs : Array.isArray(j2) ? j2 : [];
-          const latest = arr.sort((a,b) =>
-            new Date(b?.updatedAt||b?.createdAt||0) - new Date(a?.updatedAt||a?.createdAt||0)
+          const arr = Array.isArray(j2?.docs)
+            ? j2.docs
+            : Array.isArray(j2)
+            ? j2
+            : [];
+          const latest = arr.sort(
+            (a, b) =>
+              new Date(b?.updatedAt || b?.createdAt || 0) -
+              new Date(a?.updatedAt || a?.createdAt || 0)
           )[0];
           if (!cancelled && latest) setDoc(latest);
         }
@@ -232,129 +237,154 @@ const [cumFallback, setCumFallback] = useState(null);  const flatRows = useMemo(
         if (!cancelled) setHydrating(false);
       }
     })();
-    return () => { cancelled = true; };
-  }, [id]);
+    return () => {
+      cancelled = true;
+    };
+  }, [
+    id,
+    reportData?.district,
+    reportData?.institution,
+    reportData?.month,
+    reportData?.year,
+  ]);
 
-  // Fiscal YTD cumulative: April → selected month (inclusive)
+  // Server FY totals (April→selected, inclusive)
   useEffect(() => {
     setCumTotals({});
-    if (!month || !year || !baseDistrict || !baseInstitution) return;
-
+    if (!baseDistrict || !baseInstitution || !month || !year) return;
     let cancelled = false;
-
-    const fiscalMonthsUpTo = (selMonth, selYear) => {
-      const sel = normMonth(selMonth);
-      const idx = MONTHS.findIndex((m) => norm(m) === norm(sel));
-      if (idx < 0) return [];
-      const isJFM = (m) => {
-        const n = normMonth(m);
-        return n === "January" || n === "February" || n === "March";
-      };
-      const fyStartYear = isJFM(sel) ? Number(selYear) - 1 : Number(selYear);
-      const slice = MONTHS.slice(0, idx + 1); // April..selMonth
-      return slice.map((m) => ({
-        month: m,
-        year: isJFM(m) ? fyStartYear + 1 : fyStartYear,
-      }));
-    };
-
-    const fetchList = async (url) => {
-      try {
-        const r = await fetch(url);
-        if (!r.ok) return [];
-        const j = await r.json().catch(() => ({}));
-        return Array.isArray(j) ? j : Array.isArray(j?.docs) ? j.docs : [];
-      } catch {
-        return [];
-      }
-    };
-
-    // Smart hydration: try /:id first, else query by MY
-    const hydrateSmart = async (d) => {
-      const _id = d?._id || d?.id;
-      // 1) try by id
-      if (_id) {
-        try {
-          const r = await fetch(`${API_BASE}/api/reports/${encodeURIComponent(_id)}`);
-          const j = await r.json().catch(() => ({}));
-          if (r.ok && j && (j?.answers || j?.doc?.answers)) {
-            return j?.doc || j;
-          }
-        } catch {}
-      }
-      // 2) fallback by district+institution+month+year
-      const q =
-        `district=${encodeURIComponent(baseDistrict)}` +
-        `&institution=${encodeURIComponent(baseInstitution)}` +
-        `&month=${encodeURIComponent(d?.month || "")}` +
-        `&year=${encodeURIComponent(d?.year || "")}`;
-      try {
-        const r2 = await fetch(`${API_BASE}/api/reports?${q}`);
-        const j2 = await r2.json().catch(() => ({}));
-        const arr = Array.isArray(j2?.docs) ? j2.docs : Array.isArray(j2) ? j2 : [];
-        const latest = arr.sort((a,b) =>
-          new Date(b?.updatedAt||b?.createdAt||0) - new Date(a?.updatedAt||a?.createdAt||0)
-        )[0];
-        return latest || d || {};
-      } catch {
-        return d || {};
-      }
-    };
-
     (async () => {
       try {
-        // Fetch all, filter locally to this institution
-        const all = await fetchList(`${API_BASE}/api/reports`);
-        const sameInst = all.filter(
-          (d) => eq(d?.district, baseDistrict) && eq(d?.institution, baseInstitution)
+        const qs = new URLSearchParams({
+          district: baseDistrict,
+          institution: baseInstitution,
+          month,
+          year: String(year),
+        }).toString();
+        const r = await fetch(
+          `${API_BASE}/api/institution-fy-cumulative?${qs}`
         );
+        const j = await r.json().catch(() => ({}));
+        if (!cancelled && r.ok && j?.ok && j?.cumulative) {
+          setCumTotals(j.cumulative);
+        }
+      } catch (e) {
+        console.warn("FY cumulative fetch failed:", e);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [baseDistrict, baseInstitution, month, year]);
 
-        const pairs = fiscalMonthsUpTo(month, Number(year));
-        const wanted = new Set(
-          pairs.map((p) => `${norm(normMonth(p.month))}|${String(p.year).trim()}`)
+  // Local FY fallback (April→selected) — only if server didn’t provide totals
+  useEffect(() => {
+    if (cumTotals && Object.keys(cumTotals).length) {
+      setCumFallback(null);
+      return;
+    }
+    if (!baseDistrict || !baseInstitution || !month || !year) {
+      setCumFallback(null);
+      return;
+    }
+
+    let cancelled = false;
+    (async () => {
+      try {
+        // all reports for this institution
+        const qs = new URLSearchParams({
+          district: baseDistrict,
+          institution: baseInstitution,
+        }).toString();
+        const r = await fetch(`${API_BASE}/api/reports?${qs}`);
+        const j = await r.json().catch(() => ({}));
+        const all = Array.isArray(j?.docs)
+          ? j.docs
+          : Array.isArray(j)
+          ? j
+          : [];
+        if (cancelled) return;
+
+        // FY window April -> selected
+        const MONTHS = [
+          "April",
+          "May",
+          "June",
+          "July",
+          "August",
+          "September",
+          "October",
+          "November",
+          "December",
+          "January",
+          "February",
+          "March",
+        ];
+        const monthIdx = Object.fromEntries(
+          MONTHS.map((m, i) => [m.toLowerCase(), i])
         );
-
-        // pick latest doc per (month,year)
-        const latestByMY = new Map();
-        for (const d of sameInst) {
-          const k = `${norm(normMonth(d?.month))}|${String(d?.year ?? "").trim()}`;
-          if (!wanted.has(k)) continue;
-          const ts = Date.parse(d?.updatedAt || d?.createdAt || 0) || 0;
-          const prev = latestByMY.get(k);
-          const prevTs = prev ? (Date.parse(prev.updatedAt || prev.createdAt) || 0) : -Infinity;
-          if (!prev || ts >= prevTs) latestByMY.set(k, d);
+        const selIdx = monthIdx[String(month).toLowerCase()];
+        if (selIdx == null || selIdx < 0) {
+          setCumFallback(null);
+          return;
+        }
+        const fiscalStartYear = selIdx >= 9 ? Number(year) - 1 : Number(year);
+        const fiscalPairs = [];
+        for (let i = 0; i <= selIdx; i++) {
+          const m = MONTHS[i];
+          const y = i <= 8 ? fiscalStartYear : fiscalStartYear + 1;
+          fiscalPairs.push({ month: m, year: String(y) });
         }
 
-        // Hydrate each selected month (by id or query)
-        const picked = Array.from(latestByMY.values());
-        const hydrated = await Promise.all(picked.map(hydrateSmart));
+        // pick latest per month in window
+        const ts = (d) =>
+          new Date(d?.updatedAt || d?.createdAt || 0).getTime() || 0;
+        const latestByMY = new Map(); // `${m}|${y}` -> doc
+        for (const d of all) {
+          const m = String(d?.month || "").trim();
+          const y = String(d?.year || "").trim();
+          if (!fiscalPairs.some((p) => p.month === m && p.year === y)) continue;
+          const k = `${m}|${y}`;
+          const prev = latestByMY.get(k);
+          if (!prev || ts(d) >= ts(prev)) latestByMY.set(k, d);
+        }
 
-        // Sum q1..qN
-        const sums = {};
-        for (const d of hydrated) {
-          const a = d?.answers || {};
-          for (const [k, v] of Object.entries(a)) {
-            if (/^q\d+$/.test(k)) {
-              const n = Number(v) || 0;
-              if (n) sums[k] = (sums[k] || 0) + n;
-            }
+        // sum *displayed month values* across FY window
+        const out = {};
+        for (let i = 1; i <= 86; i++) out[`q${i}`] = 0;
+
+        for (const p of fiscalPairs) {
+          const d = latestByMY.get(`${p.month}|${p.year}`);
+          const ans = (d && d.answers) || {};
+          for (let i = 1; i <= 86; i++) {
+            const key = `q${i}`;
+            if (key === "q22") continue;
+            const val = getMonthValueForKey(ans, key);
+            out[key] += val;
           }
         }
+        // schools_in_area (q22) is a fixed number, no cumulative summation
+        const activePair = fiscalPairs[fiscalPairs.length - 1];
+        const activeDoc = activePair ? latestByMY.get(`${activePair.month}|${activePair.year}`) : null;
+        out["q22"] = getMonthValueForKey(activeDoc?.answers || {}, "q22");
 
-        if (!cancelled) setCumTotals(sums);
+        if (!cancelled) setCumFallback(out);
       } catch (e) {
-        console.error("Cumulative compute failed:", e);
-        if (!cancelled) setCumTotals({});
+        console.warn("Local cumulative fallback failed:", e);
+        if (!cancelled) setCumFallback(null);
       }
     })();
 
-    return () => { cancelled = true; };
-  }, [baseDistrict, baseInstitution, month, year]);
+    return () => {
+      cancelled = true;
+    };
+  }, [cumTotals, baseDistrict, baseInstitution, month, year]);
 
-  // Render fields
+  /* -------------------- Render fields + glaucoma/DR fix ------------------ */
+
   const {
-    answers: answersRaw = {},
-    cumulative: cumulativeFromServer = {},
+    answers: answersRawOriginal = {},
+    cumulative: cumulativeFromServerOriginal = {},
     eyeBank,
     visionCenter,
     institution,
@@ -362,27 +392,62 @@ const [cumFallback, setCumFallback] = useState(null);  const flatRows = useMemo(
     updatedAt,
   } = doc || {};
 
-  const normalizeTextNameFields = (rows) =>
-    Array.isArray(rows)
-      ? rows.map((row) => {
-          const out = { ...(row || {}) };
-          for (const k of Object.keys(out)) {
-            if (/name|centre|center/i.test(k) && (out[k] === 0 || out[k] === "0")) out[k] = "";
-          }
-          return out;
-        })
-      : [];
+  // 🔹 Normalize just the Glaucoma / DR block if it's in the "new" pattern
+  function normalizeGlaucomaDRBlock(src = {}) {
+    const out = { ...src };
 
-  const eyeBankData = normalizeTextNameFields(eyeBank || doc?.eyebank || doc?.eye_bank || []);
+    const gScr = Number(out.q36 ?? 0) || 0;
+    const gDet = Number(out.q37 ?? 0) || 0;
+    const drScr = Number(out.q38 ?? 0) || 0;
+    const drDet = Number(out.q39 ?? 0) || 0;
+    const drTrt = Number(out.q40 ?? 0) || 0;
+
+    // "New" pattern:
+    //  - Glaucoma detected rows (q36, q37) are both 0
+    //  - but DR values start at q38..q40
+    const isNewPattern =
+      gScr === 0 &&
+      gDet === 0 &&
+      (drScr !== 0 || drDet !== 0 || drTrt !== 0);
+
+    if (!isNewPattern) return out; // October & older → untouched
+
+    // We want:
+    //   Glaucoma treated (q38) → 0
+    //   DR screened  (q40)    → drScr (old q38)
+    //   DR detected  (q41)    → drDet (old q39)
+    //   DR treated   (q42)    → drTrt (old q40)
+    out.q38 = 0;
+    out.q40 = drScr;
+    out.q41 = drDet;
+    out.q42 = drTrt;
+
+    return out;
+  }
+
+  // Apply normalization to month answers and per-doc cumulative
+  const answersRaw = normalizeGlaucomaDRBlock(answersRawOriginal);
+  const cumulativeFromServer = normalizeGlaucomaDRBlock(
+    cumulativeFromServerOriginal || {}
+  );
+
+  const eyeBankData = normalizeTextNameFields(
+    eyeBank || doc?.eyebank || doc?.eye_bank || []
+  );
   const visionCenterData = normalizeTextNameFields(
     visionCenter || doc?.visioncentre || doc?.vision_centre || []
   );
 
-  // Fallback to server cumulative/answers if FY couldn't be built
+  // helper to pick and normalize any cumulative source
+  const pickCum = (src) =>
+    src && Object.keys(src).length ? normalizeGlaucomaDRBlock(src) : null;
+
+  // Pick cumulative: server FY → local FY fallback → stored cumulative → {}
   const cumSrc =
-    cumulativeFromServer && Object.keys(cumulativeFromServer).length
-      ? cumulativeFromServer
-      : answersRaw;
+    pickCum(cumTotals) ||
+    pickCum(cumFallback) ||
+    pickCum(cumulativeFromServer) ||
+    {};
 
   if (!reportData) return null;
 
@@ -396,8 +461,12 @@ const [cumFallback, setCumFallback] = useState(null);  const flatRows = useMemo(
       </div>
 
       <div className="mb-4">
-        <p><strong>District:</strong> {district}</p>
-        <p><strong>Institution:</strong> {institution}</p>
+        <p>
+          <strong>District:</strong> {district}
+        </p>
+        <p>
+          <strong>Institution:</strong> {institution}
+        </p>
         <p>
           <strong>Month:</strong> {month} {year}
           {updatedAt ? (
@@ -422,24 +491,44 @@ const [cumFallback, setCumFallback] = useState(null);  const flatRows = useMemo(
             <th className="border p-1 text-right">Cumulative</th>
           </tr>
         </thead>
+
         <tbody>
           {(() => {
             let qNumber = 0;
+            let inVisionSection = false; // for V. VISION CENTER
+            let inEyeBankSection = false; // for III. EYE BANK PERFORMANCE
+            let eyeBankQsSeen = 0; // count of old Eye Bank q-rows we hide
+
             return flatRows.map((item, idx) => {
               if (item.kind === "header") {
+                const upper = String(item.label || "").toUpperCase();
+
+                inVisionSection = upper.includes("VISION CENTER");
+                inEyeBankSection = upper.includes("EYE BANK PERFORMANCE");
+                if (inEyeBankSection) eyeBankQsSeen = 0;
+
                 return (
                   <tr key={`h-${idx}`}>
-                    <td colSpan={3} className="border p-1 font-bold bg-gray-100">{item.label}</td>
+                    <td colSpan={3} className="border p-1 font-bold bg-gray-100">
+                      {item.label}
+                    </td>
                   </tr>
                 );
               }
+
               if (item.kind === "subheader") {
                 return (
                   <tr key={`sh-${idx}`}>
-                    <td colSpan={3} className="border p-1 font-semibold bg-gray-50">{item.label}</td>
+                    <td
+                      colSpan={3}
+                      className="border p-1 font-semibold bg-gray-50"
+                    >
+                      {item.label}
+                    </td>
                   </tr>
                 );
               }
+
               if (item.kind === "eyeBankTable") {
                 return (
                   <tr key={`eb-${idx}`}>
@@ -449,6 +538,7 @@ const [cumFallback, setCumFallback] = useState(null);  const flatRows = useMemo(
                   </tr>
                 );
               }
+
               if (item.kind === "visionCenterTable") {
                 return (
                   <tr key={`vc-${idx}`}>
@@ -458,25 +548,84 @@ const [cumFallback, setCumFallback] = useState(null);  const flatRows = useMemo(
                   </tr>
                 );
               }
-              if (item.kind === "q") {
-                qNumber += 1;
-                const key = `q${qNumber}`;
-                const monthVal = Number(answersRaw[key] ?? 0);
 
-                // Prefer hydrated FY totals; fall back to server cumulative/answers
-                const cumVal =
-                  cumTotals[key] !== undefined
-                    ? Number(cumTotals[key] || 0)
-                    : Number(cumSrc[key] || 0);
+              if (item.kind === "q") {
+                // Always advance qNumber to keep q1..q84 aligned with stored data
+                qNumber += 1;
+
+                // Hide the first 2 legacy Eye Bank question rows (for *old* saved reports)
+                if (inEyeBankSection && eyeBankQsSeen < 2) {
+                  eyeBankQsSeen += 1;
+                  return null;
+                }
+
+                // Skip all normal question rows in the VISION CENTER section
+                if (inVisionSection) {
+                  return null;
+                }
+
+                const label =
+                  item.row?.label ||
+                  item.row?.title ||
+                  item.row?.text ||
+                  item.row?.name ||
+                  `Row ${qNumber}`;
+
+                const key = `q${qNumber}`;
+
+                // ----- special fix: Glaucoma "Screened" bug (q36 vs q34) -----
+                let rawMonth = answersRaw[key];
+                let rawCum = cumSrc && cumSrc[key];
+
+                const rowId = item.row?.id;
+                if ((rawMonth == null || rawMonth === "" || Number(rawMonth) === 0) && rowId) {
+                  if (answersRawOriginal?.[rowId] != null && answersRawOriginal[rowId] !== "") {
+                    rawMonth = answersRawOriginal[rowId];
+                  }
+                }
+                if ((rawCum == null || rawCum === "" || Number(rawCum) === 0) && rowId) {
+                  if (cumSrc?.[rowId] != null && cumSrc[rowId] !== "") {
+                    rawCum = cumSrc[rowId];
+                  }
+                }
+
+                if (key === "q36") {
+                  const altMonth = answersRaw?.q34;
+                  const altCum = cumSrc?.q34;
+
+                  const monthIsZero =
+                    rawMonth == null ||
+                    rawMonth === "" ||
+                    Number(rawMonth) === 0;
+                  const altMonthNonZero =
+                    altMonth != null && Number(altMonth) !== 0;
+
+                  const cumIsZero =
+                    rawCum == null || rawCum === "" || Number(rawCum) === 0;
+                  const altCumNonZero =
+                    altCum != null && Number(altCum) !== 0;
+
+                  if (monthIsZero && altMonthNonZero) {
+                    rawMonth = altMonth;
+                  }
+                  if (cumIsZero && altCumNonZero) {
+                    rawCum = altCum;
+                  }
+                }
+                // ----------------------------------------------------------------
+
+                const monthVal = Number(rawMonth ?? 0) || 0;
+                const cumVal = key === "q22" ? monthVal : (Number(rawCum ?? 0) || 0);
 
                 return (
                   <tr key={`r-${idx}`}>
-                    <td className="border p-1">{item.row.label}</td>
+                    <td className="border p-1">{label}</td>
                     <td className="border p-1 text-right">{monthVal}</td>
                     <td className="border p-1 text-right">{cumVal}</td>
                   </tr>
                 );
               }
+
               return null;
             });
           })()}
@@ -486,18 +635,58 @@ const [cumFallback, setCumFallback] = useState(null);  const flatRows = useMemo(
       <div className="flex justify-between mt-8">
         <div>
           Signature of Senior Optometrist / Optometrist
-          <br />.........................................
+          <br />
+          .........................................
         </div>
         <div>
           Signature of Superintendent / Medical Officer
-          <br />.........................................
+          <br />
+          .........................................
         </div>
       </div>
     </div>
   );
 }
-/* ReportEntry (data entry + save)                                             */
-/* -------------------------------------------------------------------------- */
+
+function getEyeBankLegacySlotsAndTribalIds() {
+  const flatRows = buildFlatRows(sections);
+
+  let inEyeBank = false;
+  let eyeBankQsSeen = 0;
+  let qNumber = 0;
+
+  let slot1 = null;
+  let slot2 = null;
+
+  for (const item of flatRows) {
+    if (item.kind === "header") {
+      const upper = String(item.label || "").toUpperCase();
+      inEyeBank = upper.includes("EYE BANK PERFORMANCE");
+      if (inEyeBank) eyeBankQsSeen = 0;
+      continue;
+    }
+
+    if (item.kind === "q") {
+      qNumber += 1;
+
+      if (inEyeBank && eyeBankQsSeen < 2) {
+        eyeBankQsSeen += 1;
+        if (slot1 == null) slot1 = qNumber; // first hidden legacy slot
+        else if (slot2 == null) slot2 = qNumber; // second hidden legacy slot
+      }
+    }
+  }
+
+  return {
+    slot1,
+    slot2,
+    TRIBAL1: "addl_tribal_cataract_cases",
+    TRIBAL2: "addl_tribal_cataract_surgery",
+  };
+}
+
+/* ======================= /ReportEntry (inline) ======================= */
+
 
 function ReportEntry({
   user,
@@ -508,82 +697,338 @@ function ReportEntry({
   initialYear = "",
   disabled = false,
 }) {
-  const [answers, setAnswers] = useState(initialAnswers);
+  const startFx = () =>
+    typeof startFlute === "function" ? startFlute() : void 0;
+  const stopFx = () =>
+    typeof stopFlute === "function" ? stopFlute() : void 0;
 
-  // Helper: accept .questions or .rows and ensure each item has id/label
-  const getQs = (blk) =>
-    (Array.isArray(blk?.questions) ? blk.questions : Array.isArray(blk?.rows) ? blk.rows : []).map(
-      (q, i) => ({
-        ...q,
-        id:
-          q?.id ??
-          q?.key ??
-          q?.code ??
-          q?.name ??
-          q?.labelKey ??
-          `q_auto_${(blk?.title || "blk").toString().replace(/\s+/g, "_")}_${i + 1}`,
-        label: q?.label ?? q?.title ?? q?.text ?? q?.name ?? `Row ${i + 1}`,
-      })
-    );
+  function flattenQuestionsFromBlock(blk) {
+    const out = [];
 
-  // ---- Eye Bank table state (robust to data shape) ----
-  const eyeBankSec = sections.find((s) => /eye bank/i.test(String(s.title || "")));
-  const eyeBankTemplateRows = Array.isArray(eyeBankSec?.rows) ? eyeBankSec.rows : [];
-  const [eyeBank, setEyeBank] = useState(
-    initialEyeBank.length ? initialEyeBank : eyeBankTemplateRows.map(() => ({}))
+    const pushQ = (q, i, title = "blk") => {
+      const id =
+        q?.id ||
+        q?.key ||
+        q?.code ||
+        q?.name ||
+        q?.labelKey ||
+        q?.field ||
+        `q_auto_${String(title).replace(/\s+/g, "_")}_${i + 1}`;
+      const label =
+        q?.label || q?.title || q?.text || q?.name || `Row ${i + 1}`;
+      out.push({ ...q, id, label });
+    };
+
+    const walk = (node, title = node?.title || "blk") => {
+      if (!node || typeof node !== "object") return;
+
+      const isTableSection = node.table && Array.isArray(node.rows);
+
+      const direct = Array.isArray(node.questions)
+        ? node.questions
+        : !isTableSection && Array.isArray(node.rows)
+        ? node.rows
+        : [];
+
+      direct.forEach((q, i) => pushQ(q, i, title));
+
+      const nested =
+        (Array.isArray(node.items) && node.items) ||
+        (Array.isArray(node.subsections) && node.subsections) ||
+        (Array.isArray(node.sections) && node.sections) ||
+        null;
+
+      if (nested) {
+        nested.forEach((child, idx) =>
+          walk(child, child?.title || `${title}_${idx + 1}`)
+        );
+      }
+    };
+
+    walk(blk);
+    return out;
+  }
+
+  const getQsLocal = (blk) => flattenQuestionsFromBlock(blk);
+
+  /* ------------------------------ state ---------------------------------- */
+  const [answers, setAnswers] = React.useState(initialAnswers);
+
+  // Eye Bank
+  const eyeBankSection = sections.find((s) =>
+    (s.title || "").toUpperCase().includes("EYE BANK")
+  );
+  const eyeBankRowsDef = getQsLocal(eyeBankSection);
+  const [eyeBank, setEyeBank] = React.useState(
+    initialEyeBank.length
+      ? initialEyeBank
+      : eyeBankRowsDef.length
+      ? eyeBankRowsDef.map(() => ({}))
+      : [{}, {}]
   );
 
-  // ---- Vision Center table state (robust to data shape) ----
-  const vcSec = sections.find((s) => /vision center/i.test(String(s.title || "")));
-  const visionRows = Array.isArray(vcSec?.rows) ? vcSec.rows : [];
-  const [visionCenter, setVisionCenter] = useState(
+  // Vision Center
+  const visionSection = sections.find((s) =>
+    (s.title || "").toUpperCase().includes("VISION CENTER")
+  );
+  const visionRowsDef = Array.isArray(visionSection?.rows)
+    ? visionSection.rows
+    : [];
+  const [visionCenter, setVisionCenter] = React.useState(
     initialVisionCenter.length
       ? initialVisionCenter
-      : visionRows.map((row) =>
+      : visionRowsDef.length
+      ? visionRowsDef.map((row) =>
           Object.fromEntries(
-            Object.keys(row || {})
+            Object.keys(row)
               .filter((k) => k.endsWith("Key"))
               .map((k) => [row[k], ""])
           )
         )
+      : [
+          { centerName: "", patientsExamined: "" },
+          { centerName: "", patientsExamined: "" },
+        ]
   );
 
-  const [month, setMonth] = useState(initialMonth);
-  const [year, setYear] = useState(initialYear);
-  const [mode, setMode] = useState("edit");
-  const [locked, setLocked] = useState(false);
+  const [month, setMonth] = React.useState(initialMonth);
+  const [year, setYear] = React.useState(initialYear);
+  const [mode, setMode] = React.useState("edit");
+  const [alreadySubmitted, setAlreadySubmitted] = React.useState(false);
 
-  const isDoc = user?.institution?.startsWith("DOC ");
+  const instStrReportEntry = String(user?.institution || "").trim().toLowerCase();
+  const roleStrReportEntry = String(user?.role || "").trim().toLowerCase();
+  const isDoc =
+    !!(user?.isDoc ||
+      roleStrReportEntry === "doc" ||
+      roleStrReportEntry === "dc" ||
+      /^doc/i.test(instStrReportEntry) ||
+      /^dc/i.test(instStrReportEntry) ||
+      /^doc/i.test(user?.username || "") ||
+      /^dc/i.test(user?.username || "") ||
+      user?.role === "DOC");
   const canSave = month && year;
+  const canSaveThisCombo = canSave && !alreadySubmitted;
 
+  React.useEffect(() => {
+    startFx();
+    return () => stopFx();
+  }, []);
+
+  React.useEffect(() => {
+    let cancelled = false;
+    setAlreadySubmitted(false);
+
+    (async () => {
+      if (!user?.district || !user?.institution || !month || !year) return;
+      try {
+        const url =
+          `${API_BASE}/api/reports?` +
+          `district=${encodeURIComponent(user.district)}` +
+          `&institution=${encodeURIComponent(user.institution)}` +
+          `&month=${encodeURIComponent(month)}` +
+          `&year=${encodeURIComponent(year)}`;
+        const res = await fetch(url);
+        const json = await res.json().catch(() => ({}));
+        const items = Array.isArray(json?.docs)
+          ? json.docs
+          : Array.isArray(json)
+          ? json
+          : [];
+        if (!cancelled) setAlreadySubmitted(items.length > 0);
+      } catch {}
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [user?.district, user?.institution, month, year]);
+
+  // Pre-populate schools_in_area (q22) from the institution's most recent report
+  React.useEffect(() => {
+    let cancelled = false;
+    if (!user?.district || !user?.institution) return;
+
+    (async () => {
+      try {
+        const url =
+          `${API_BASE}/api/reports?` +
+          `district=${encodeURIComponent(user.district)}` +
+          `&institution=${encodeURIComponent(user.institution)}`;
+        const res = await fetch(url);
+        const json = await res.json().catch(() => ({}));
+        const items = Array.isArray(json?.docs)
+          ? json.docs
+          : Array.isArray(json)
+          ? json
+          : [];
+        
+        if (cancelled) return;
+
+        if (items.length > 0) {
+          // Sort to find the latest submitted report by updatedAt / createdAt
+          const ts = (d) =>
+            new Date(d?.updatedAt || d?.createdAt || 0).getTime() || 0;
+          const sorted = [...items].sort((a, b) => ts(b) - ts(a));
+          const latestDoc = sorted[0];
+          
+          // q22 corresponds to index 21, id is "schools_in_area"
+          const lastSchoolsVal = latestDoc?.answers?.q22;
+          if (lastSchoolsVal !== undefined && lastSchoolsVal !== null) {
+            setAnswers((prev) => {
+              // Only carry over if schools_in_area is not yet entered (undefined or empty)
+              if (prev["schools_in_area"] === undefined || prev["schools_in_area"] === "") {
+                return { ...prev, schools_in_area: String(lastSchoolsVal) };
+              }
+              return prev;
+            });
+          }
+        }
+      } catch (err) {
+        console.warn("Failed to fetch latest report for schools_in_area carryover:", err);
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [user?.district, user?.institution]);
+
+  /* ----------------------------- helpers --------------------------------- */
+  const sanitizeTableArrayLocal = (arr) =>
+    Array.isArray(arr)
+      ? arr.map((r) => (r && typeof r === "object" ? r : {}))
+      : [];
+
+  const someRowHasValuesLocal = (rows) =>
+    Array.isArray(rows) &&
+    rows.some((r) =>
+      Object.values(r || {}).some(
+        (v) =>
+          v !== undefined &&
+          v !== null &&
+          String(v).trim() !== "" &&
+          String(v) !== "0"
+      )
+    );
+
+  const handleTableChange =
+    (setFn) =>
+    (rowIdx, key, value) => {
+      setFn((prev) => {
+        const next = [...prev];
+        next[rowIdx] = { ...next[rowIdx], [key]: value };
+        return next;
+      });
+    };
+
+  const handleWheelBlock = (e) => {
+    const t = e.target;
+    if (t && t.tagName === "INPUT" && t.type === "number") {
+      t.blur();
+      e.preventDefault();
+    }
+  };
+
+  /* --------- Stable q1..q84 order (must match ViewReports) --------------- */
+  const qDefs84 = React.useMemo(() => {
+    const flatRows = buildFlatRows(sections);
+
+    const qItems = flatRows
+      .filter((item) => item.kind === "q")
+      .map((item, idx) => {
+        const row = item.row || {};
+        const id =
+          row.id ||
+          row.key ||
+          row.code ||
+          row.name ||
+          row.labelKey ||
+          row.field ||
+          `q_auto_flat_${idx + 1}`;
+        const label =
+          row.label || row.title || row.text || row.name || `Row ${idx + 1}`;
+        return { ...row, id, label };
+      });
+
+    return qItems.slice(0, 86);
+  }, []);
+
+  /* ✅ ENTRY question order (includes subsections properly) */
+  const entryDefs = React.useMemo(() => {
+    const out = [];
+    sections
+      .filter((s) => !s.table)
+      .forEach((s) => out.push(...getQsLocal(s)));
+    return out;
+  }, []);
+
+  const buildFullAnswers84 = () => {
+    const out = {};
+    for (let i = 0; i < qDefs84.length; i++) {
+      const qDef = qDefs84[i];
+      const keyId = qDef?.id;
+      const raw = keyId ? answers[keyId] : undefined;
+      const clean =
+        raw === undefined || raw === null || String(raw).trim() === ""
+          ? "0"
+          : String(raw).trim();
+      out[`q${i + 1}`] = clean;
+    }
+    // Also save semantic named keys for compatibility
+    for (const qDef of qDefs84) {
+      if (qDef?.id && answers[qDef.id] !== undefined) {
+        const raw = answers[qDef.id];
+        out[qDef.id] =
+          raw === undefined || raw === null || String(raw).trim() === ""
+            ? "0"
+            : String(raw).trim();
+      }
+    }
+    return out;
+  };
+
+  /* ------------------------------ save ----------------------------------- */
   const confirm = async () => {
+    if (user?.isGuest) {
+      alert("Guest Mode: Saving data is disabled.");
+      return;
+    }
     if (!month || !year) {
       alert("Please select both Month and Year before saving.");
       return;
     }
-
-    const answersPartial = buildAnswersPartial(answers, sections);
-    const cleanEyeBank = sanitizeTableArray(eyeBank);
-    const cleanVisionCenter = sanitizeTableArray(visionCenter);
-
-    if (
-      Object.keys(answersPartial).length === 0 &&
-      !someRowHasValues(cleanEyeBank) &&
-      !someRowHasValues(cleanVisionCenter)
-    ) {
-      alert("Please enter at least one value in questions or tables.");
+    if (!user?.district || !user?.institution) {
+      alert("Missing user district/institution. Please login again.");
       return;
     }
+    if (alreadySubmitted) {
+      alert("A report for this Month & Year already exists for your institution.");
+      return;
+    }
+
+    let answersFull = buildFullAnswers84();
+
+    const cleanEyeBank = sanitizeTableArrayLocal(eyeBank);
+    const cleanVisionCenter = sanitizeTableArrayLocal(visionCenter);
+
+    const anyAnswer = Object.values(answersFull).some((v) => String(v) !== "0");
+    const hasEyeBank = someRowHasValuesLocal(cleanEyeBank);
+    const hasVisionCenter = someRowHasValuesLocal(cleanVisionCenter);
 
     const payload = {
       district: user.district,
       institution: user.institution,
       month,
       year,
-      answers: answersPartial,
+      answers: answersFull,
+      eyeBank: cleanEyeBank,
+      visionCenter: cleanVisionCenter,
     };
-    if (someRowHasValues(cleanEyeBank)) payload.eyeBank = cleanEyeBank;
-    if (someRowHasValues(cleanVisionCenter)) payload.visionCenter = cleanVisionCenter;
+
+    if (!anyAnswer && !hasEyeBank && !hasVisionCenter) payload.forceSave = true;
+
+    console.log("REPORT SAVE PAYLOAD", payload);
 
     try {
       const res = await fetch(`${API_BASE}/api/reports`, {
@@ -591,48 +1036,62 @@ function ReportEntry({
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(payload),
       });
-      const data = await res.json().catch(() => ({}));
-      if (!res.ok) {
-        console.error("Save failed:", data);
-        alert("❌ Save failed. See console.");
+
+      const raw = await res.text();
+      let data = {};
+      try {
+        data = raw ? JSON.parse(raw) : {};
+      } catch {}
+
+      if (!res.ok || data?.ok === false) {
+        const msg =
+          data?.error ||
+          raw ||
+          `HTTP ${res.status} ${res.statusText || ""}`.trim();
+        alert(`❌ Save failed: ${msg}`);
         return;
       }
-      setLocked(true);
+
       alert(`✅ Saved for ${user.institution}, ${user.district}`);
+      stopFx();
+      setMode("edit");
+      setAlreadySubmitted(true);
     } catch (err) {
       console.error("Save error:", err);
       alert("❌ Unexpected error during save. See console.");
     }
   };
 
-  const handleTableChange = (setFn) => (rowIdx, key, value) => {
-    setFn((prev) => {
-      const updated = [...prev];
-      updated[rowIdx] = { ...updated[rowIdx], [key]: value };
-      return updated;
-    });
-  };
-
-  if (locked) {
-    return (
-      <div className="max-w-2xl mx-auto mt-12 p-8 rounded-xl shadow-lg bg-white text-center text-[#134074] font-serif">
-        ✅ Report for <b>{user.institution}, {user.district}</b> is locked.<br />
-        Contact admin to unlock.
-      </div>
-    );
-  }
-
+  /* ------------------------------ render --------------------------------- */
   return (
-    <div className="a4-wrapper font-serif">
+    <div className="a4-wrapper font-serif" onWheel={handleWheelBlock}>
+      <style>{`
+        .a4-wrapper input[type="number"]::-webkit-outer-spin-button,
+        .a4-wrapper input[type="number"]::-webkit-inner-spin-button {
+          -webkit-appearance: none;
+          margin: 0;
+        }
+        .a4-wrapper input[type="number"] {
+          -moz-appearance: textfield;
+        }
+      `}</style>
+
       <div className="p-6 bg-white rounded-xl shadow-lg">
         <h2 className="text-3xl font-extrabold text-center text-[#134074] uppercase mb-4">
           REPORT DATA ENTRY
         </h2>
         <div className="text-center text-[#016eaa] mb-2">
-          District: <b>{user.district}</b> | Institution: <b>{user.institution}</b>
+          District: <b>{user.district}</b> | Institution:{" "}
+          <b>{user.institution}</b>
         </div>
 
-        <div className="flex justify-end mb-6">
+        {user?.isGuest && (
+          <div className="mb-4 text-xs font-semibold text-amber-800 bg-amber-50 border border-amber-200 rounded px-3 py-2 text-center max-w-md mx-auto">
+            🕶️ <b>Guest Mode Preview</b>: You can fill out and test the form, but saving is disabled.
+          </div>
+        )}
+
+        <div className="flex justify-end mb-2">
           <MonthYearSelector
             month={month}
             year={year}
@@ -642,57 +1101,46 @@ function ReportEntry({
           />
         </div>
 
-        {/* ===== Question Sections (accepts `questions` OR `rows`) ===== */}
+        {alreadySubmitted && (
+          <div className="mb-4 px-3 py-2 rounded bg-yellow-100 text-yellow-900 border border-yellow-300">
+            ⚠️ A report for <b>{month}</b> <b>{year}</b> already exists for your institution.
+          </div>
+        )}
+
         {sections
           .filter((s) => !s.table)
-          .map((s, secIdx) => {
-            const topQs = getQs(s);
+          .map((s) => {
+            const qs = getQsLocal(s);
+            if (!qs.length) return null;
             return (
-              <div key={s.title || `sec-${secIdx}`} className="mb-12">
-                <h4 className="text-lg font-bold text-[#017d8a] mb-4">{s.title || ""}</h4>
-
-                {topQs.length > 0 && (
-                  <div className="flex flex-col gap-6">
-                    {topQs.map((q) => (
-                      <div className="mb-2" key={q.id}>
-                        <QuestionInput
-                          q={q}
-                          value={answers[q.id] || ""}
-                          onChange={(val) => setAnswers((a) => ({ ...a, [q.id]: val }))}
-                          disabled={disabled}
-                        />
-                      </div>
-                    ))}
-                  </div>
+              <div key={s.title || Math.random()} className="mb-12">
+                {s.title && (
+                  <h4 className="text-lg font-bold text-[#017d8a] mb-4">
+                    {s.title}
+                  </h4>
                 )}
-
-                {Array.isArray(s.subsections) &&
-                  s.subsections.map((sub, subIdx) => {
-                    const subQs = getQs(sub);
-                    return (
-                      <div key={sub.title || `sub-${secIdx}-${subIdx}`} className="mt-10">
-                        <h5 className="font-bold text-[#017d8a] mb-4">{sub.title || ""}</h5>
-                        <div className="flex flex-col space-y-8">
-                          {subQs.map((q) => (
-                            <QuestionInput
-                              key={q.id}
-                              q={q}
-                              value={answers[q.id] || ""}
-                              onChange={(val) => setAnswers((a) => ({ ...a, [q.id]: val }))}
-                              disabled={disabled}
-                            />
-                          ))}
-                        </div>
-                      </div>
-                    );
-                  })}
+                <div className="flex flex-col gap-6">
+                  {qs.map((q) => (
+                    <div className="mb-2" key={q.id || q.label}>
+                      <QuestionInput
+                        q={q}
+                        value={answers[q.id] || ""}
+                        onChange={(val) =>
+                          setAnswers((a) => ({ ...a, [q.id]: val }))
+                        }
+                        disabled={disabled}
+                      />
+                    </div>
+                  ))}
+                </div>
               </div>
             );
           })}
 
-        {/* Eye Bank */}
         <div className="mb-12">
-          <h4 className="text-lg font-bold text-[#017d8a] mb-4">III. EYE BANK PERFORMANCE</h4>
+          <h4 className="text-lg font-bold text-[#017d8a] mb-4">
+            III. EYE BANK PERFORMANCE
+          </h4>
           <EyeBankTable
             data={eyeBank}
             onChange={handleTableChange(setEyeBank)}
@@ -700,31 +1148,35 @@ function ReportEntry({
           />
         </div>
 
-        {/* Vision Center */}
         <div className="mb-12">
-          <h4 className="text-lg font-bold text-[#017d8a] mb-4">V. VISION CENTER</h4>
+          <h4 className="text-lg font-bold text-[#017d8a] mb-4">
+            V. VISION CENTER
+          </h4>
           <VisionCenterTable
             data={visionCenter}
             onChange={handleTableChange(setVisionCenter)}
             disabled={disabled}
+            showInstitution={false}
           />
         </div>
 
         {!disabled && !isDoc && (
           <div className="text-center mt-8">
-            {!canSave && (
-              <div className="text-red-600 font-medium mb-4">
-                Please select both <b>Month</b> and <b>Year</b> before saving.
-              </div>
-            )}
             <button
               onClick={() =>
-                canSave
+                canSaveThisCombo
                   ? setMode("confirm")
-                  : alert("❌ Please select both Month and Year before saving.")
+                  : alert(
+                      alreadySubmitted
+                        ? "A report already exists for this Month & Year."
+                        : "❌ Please select both Month and Year before saving."
+                    )
               }
+              disabled={!canSaveThisCombo}
               className={`px-8 py-3 rounded-lg text-white transition ${
-                canSave ? "bg-green-600 hover:bg-green-700" : "bg-gray-400 cursor-not-allowed"
+                canSaveThisCombo
+                  ? "bg-green-600 hover:bg-green-700"
+                  : "bg-gray-400 cursor-not-allowed"
               }`}
             >
               Save All
@@ -754,9 +1206,6 @@ function ReportEntry({
 }
 
 
-/* ========================================================================== */
-/* App                                                                         */
-/* ========================================================================== */
 
 function App() {
   const [user, setUser] = useState(null);
@@ -779,16 +1228,95 @@ function App() {
     cumulativeData: [],
   });
 
-  // DOC/DC detection
+  // DOC/DC/ADMIN detection
   const instStr = String(user?.institution || "").trim().toLowerCase();
-  const userRole =
-    (user?.isDoc || /^doc\s/.test(instStr) || /^dc\s/.test(instStr))
-      ? "DOC"
-      : (user?.role || "USER");
+  const roleStr = String(user?.role || "").trim().toLowerCase();
+  const isSuperAdmin = !!(
+    user?.isAdmin ||
+    user?.isSuperAdmin ||
+    user?.role === "ADMIN" ||
+    roleStr === "admin"
+  );
+  const userRole = isSuperAdmin
+    ? "ADMIN"
+    : user?.isDoc ||
+      roleStr === "doc" ||
+      roleStr === "dc" ||
+      /^doc/i.test(instStr) ||
+      /^dc/i.test(instStr) ||
+      /^doc/i.test(user?.username || "") ||
+      /^dc/i.test(user?.username || "") ||
+      user?.role === "DOC"
+    ? "DOC"
+    : user?.role || "USER";
 
-  const qDefs = useMemo(() => orderedQuestions(sections), []);
-  const selectedDistrict = user?.district || "Kozhikode";
-console.log("Kozhikode institutions (last 3):", (districtInstitutions["Kozhikode"] || []).slice(-3));
+  // 🔁 Use the SAME 86-question order as ViewReports / saving (q1..q86)
+const qDefs = useMemo(() => {
+  const flatRows = buildFlatRows(sections);
+  const qItems = flatRows
+    .filter((item) => item.kind === "q")
+    .map((item, idx) => {
+      const row = item.row || {};
+      const id =
+        row.id ||
+        row.key ||
+        row.code ||
+        row.name ||
+        row.labelKey ||
+        row.field ||
+        `q_auto_flat_${idx + 1}`;
+      const label =
+        row.label || row.title || row.text || row.name || `Row ${idx + 1}`;
+      return { ...row, id, label };
+    });
+
+  return qItems.slice(0, 86);
+}, []);
+
+
+  // Labels aligned with q1..q86 (index i → q{i+1})
+  const qLabels = useMemo(
+    () => qDefs.map((q) => q.label || ""),
+    [qDefs]
+  );
+
+  const getQuestionsForMenu = React.useCallback((m) => {
+    const allQs = qDefs.map((q, idx) => ({ label: q.label || "", index: idx }));
+    
+    if (m === "performance-cataract") {
+      // q5 to q10
+      return [4, 5, 6, 7, 8, 9].map(i => allQs[i]).filter(Boolean);
+    }
+    if (m === "identified-cataract") {
+      // q5
+      return [4].map(i => allQs[i]).filter(Boolean);
+    }
+    if (m === "op-eye-diseases") {
+      // Section I (q1-q21) and Section IV (q35-q58)
+      const indices = [];
+      for (let i = 0; i <= 20; i++) indices.push(i);
+      for (let i = 34; i <= 57; i++) indices.push(i);
+      return indices.map(i => allQs[i]).filter(Boolean);
+    }
+    if (m === "other-diseases") {
+      // Section IV (q35-q58)
+      const indices = [];
+      for (let i = 34; i <= 57; i++) indices.push(i);
+      return indices.map(i => allQs[i]).filter(Boolean);
+    }
+    if (m === "seh-spectacles-eyebank") {
+      // q11 (index 10), Section II (q22-q32 / indices 21-31), legacy Eye Bank (q33-q34 / indices 32-33), Addl Old Aged (q59-q61 / indices 58-60), Addl School (q62-q69 / indices 61-68)
+      const indices = [10];
+      for (let i = 21; i <= 31; i++) indices.push(i);
+      for (let i = 32; i <= 33; i++) indices.push(i); // Eye bank
+      for (let i = 58; i <= 60; i++) indices.push(i);
+      for (let i = 61; i <= 68; i++) indices.push(i);
+      return indices.map(i => allQs[i]).filter(Boolean);
+    }
+    return allQs;
+  }, [qDefs]);
+
+  const selectedDistrict = user?.isGuest ? "Kozhikode" : user?.district || "Kozhikode";
 
   const institutionNamesMemo = useMemo(
     () =>
@@ -816,7 +1344,20 @@ console.log("Kozhikode institutions (last 3):", (districtInstitutions["Kozhikode
 
   /* ------------------------ Build district institution-wise ------------------------ */
   useEffect(() => {
-    if ((menu !== "district-institutions" && menu !== "print" && menu !== "district-dl-inst") || !month || !year || !selectedDistrict) return;
+    if (
+      (menu !== "district-institutions" &&
+        menu !== "performance-cataract" &&
+        menu !== "op-eye-diseases" &&
+        menu !== "seh-spectacles-eyebank" &&
+        menu !== "other-diseases" &&
+        menu !== "identified-cataract" &&
+        menu !== "print" &&
+        menu !== "district-dl-inst") ||
+      !month ||
+      !year ||
+      !selectedDistrict
+    )
+      return;
 
     let cancelled = false;
 
@@ -843,19 +1384,6 @@ console.log("Kozhikode institutions (last 3):", (districtInstitutions["Kozhikode
       }
     };
 
-    const hydrateDoc = async (doc) => {
-      const id = doc?._id || doc?.id;
-      if (!id) return doc;
-      try {
-        const r = await fetch(`${API_BASE}/api/reports/${encodeURIComponent(id)}`);
-        if (!r.ok) return doc;
-        const j = await r.json().catch(() => ({}));
-        return j?.doc || j || doc;
-      } catch {
-        return doc;
-      }
-    };
-
     const ts = (d) => {
       const t = Date.parse(d?.updatedAt || d?.createdAt || 0);
       return Number.isFinite(t) ? t : 0;
@@ -863,27 +1391,42 @@ console.log("Kozhikode institutions (last 3):", (districtInstitutions["Kozhikode
 
     (async () => {
       try {
-        const all = await fetchList(`${API_BASE}/api/reports`);
+        const isRegisterSubmenu =
+          menu === "performance-cataract" ||
+          menu === "op-eye-diseases" ||
+          menu === "seh-spectacles-eyebank" ||
+          menu === "other-diseases" ||
+          menu === "identified-cataract";
 
-        const districtDocs = all.filter(
-          (d) =>
-            String(d?.district || "").trim().toLowerCase() ===
-            String(selectedDistrict).trim().toLowerCase()
-        );
-
-        const inFiscalWindow = districtDocs.filter((d) =>
-          fiscalPairs.some(
-            (p) =>
-              String(d?.month || "").trim().toLowerCase() === p.month.toLowerCase() &&
-              String(d?.year || "") === p.year
+        // Query only the required months of the fiscal window in parallel
+        const reportFetches = fiscalPairs.map((p) =>
+          fetchList(
+            `${API_BASE}/api/reports?district=${encodeURIComponent(selectedDistrict)}&month=${encodeURIComponent(p.month)}&year=${encodeURIComponent(p.year)}`
           )
         );
 
-        const hydrated = await Promise.all(inFiscalWindow.map(hydrateDoc));
+        const fetches = [
+          Promise.all(reportFetches)
+        ];
+
+        if (isRegisterSubmenu) {
+          fetches.push(
+            fetchList(`${API_BASE}/api/blind-register?district=${encodeURIComponent(selectedDistrict)}`),
+            fetchList(`${API_BASE}/api/cataract-backlog?district=${encodeURIComponent(selectedDistrict)}`),
+            fetchList(`${API_BASE}/api/old-aged-spectacles?district=${encodeURIComponent(selectedDistrict)}`),
+            fetchList(`${API_BASE}/api/school-spectacles?district=${encodeURIComponent(selectedDistrict)}`)
+          );
+        }
+
+        const [reportMonthResults, blindReg = [], cataractReg = [], oldAgedReg = [], schoolReg = []] =
+          await Promise.all(fetches);
+
         if (cancelled) return;
 
+        const allReports = reportMonthResults.flat();
+
         const latestByInstMonth = new Map();
-        hydrated.forEach((d) => {
+        allReports.forEach((d) => {
           const inst = String(d?.institution || "").trim();
           if (!inst || /^doc\s/i.test(inst) || /^dc\s/i.test(inst)) return;
           const instLower = inst.toLowerCase();
@@ -896,7 +1439,10 @@ console.log("Kozhikode institutions (last 3):", (districtInstitutions["Kozhikode
 
         const displayByLower = new Map();
         (Array.isArray(institutionNamesMemo) ? institutionNamesMemo : [])
-          .filter((s) => s && !/^doc\s/i.test(String(s)) && !/^dc\s/i.test(String(s)))
+          .filter(
+            (s) =>
+              s && !/^doc\s/i.test(String(s)) && !/^dc\s/i.test(String(s))
+          )
           .forEach((s) => {
             const disp = String(s).trim();
             const lower = disp.toLowerCase();
@@ -927,9 +1473,15 @@ console.log("Kozhikode institutions (last 3):", (districtInstitutions["Kozhikode
         displayByLower.forEach((displayName, lowerName) => {
           const rec =
             byInstAgg.get(displayName) ||
-            { institution: displayName, monthData: mkZeros(), cumulativeData: mkZeros() };
+            {
+              institution: displayName,
+              monthData: mkZeros(),
+              cumulativeData: mkZeros(),
+            };
 
-          const md = latestByInstMonth.get(`${lowerName}|${monthLowerSel}|${yearStrSel}`);
+          const md = latestByInstMonth.get(
+            `${lowerName}|${monthLowerSel}|${yearStrSel}`
+          );
           const monthAns = md?.answers || {};
           for (let i = 0; i < qDefs.length; i++) {
             const k = `q${i + 1}`;
@@ -942,11 +1494,95 @@ console.log("Kozhikode institutions (last 3):", (districtInstitutions["Kozhikode
             const a = d?.answers || {};
             for (let i = 0; i < qDefs.length; i++) {
               const k = `q${i + 1}`;
+              if (i === 21) continue; // Skip schools_in_area (q22 / index 21) from cumulative addition
               rec.cumulativeData[i] += Number(a[k] ?? 0) || 0;
             }
           }
+          // schools_in_area cumulative is equal to the active month's value (no summation)
+          rec.cumulativeData[21] = rec.monthData[21];
           byInstAgg.set(displayName, rec);
         });
+
+        if (isRegisterSubmenu) {
+          const getMonthNumber = (mName) => {
+            const map = {
+              january: "01", february: "02", march: "03", april: "04", may: "05", june: "06",
+              july: "07", august: "08", september: "09", october: "10", november: "11", december: "12"
+            };
+            return map[String(mName).trim().toLowerCase()] || "";
+          };
+
+          const getPrefix = (m, y) => `${y}-${getMonthNumber(m)}`;
+          const monthPrefix = getPrefix(month, year);
+          const fiscalPrefixes = fiscalPairs.map(p => getPrefix(p.month, p.year));
+
+          const isMale = r => String(r.sex || "").trim().toLowerCase() === "male";
+          const isFemale = r => String(r.sex || "").trim().toLowerCase() === "female";
+          const isOperated = r => String(r.status || "").trim().toLowerCase() === "operated";
+
+          const filterReg = (reg, dateField, prefixes, nameLower, extraFilter = () => true) => {
+            const arr = Array.isArray(reg) ? reg : [];
+            return arr.filter(r => {
+              const rInst = String(r?.institution || "").trim().toLowerCase();
+              if (rInst !== nameLower) return false;
+              const dateVal = r?.[dateField];
+              if (!dateVal) return false;
+              const matchesDate = prefixes.some(pref => String(dateVal).startsWith(pref));
+              if (!matchesDate) return false;
+              return extraFilter(r);
+            }).length;
+          };
+
+          displayByLower.forEach((displayName, lowerName) => {
+            const rec = byInstAgg.get(displayName);
+            if (!rec) return;
+
+            const mCounts = {
+              q5: filterReg(cataractReg, "detectionDate", [monthPrefix], lowerName),
+              q7: filterReg(cataractReg, "surgeryDate", [monthPrefix], lowerName, isOperated),
+              q8: filterReg(cataractReg, "surgeryDate", [monthPrefix], lowerName, r => isOperated(r) && isFemale(r)),
+              q11: filterReg(oldAgedReg, "dateOfPrescription", [monthPrefix], lowerName),
+              q26: filterReg(schoolReg, "dateOfPrescription", [monthPrefix], lowerName),
+              q27: filterReg(schoolReg, "dateOfPrescription", [monthPrefix], lowerName),
+              q57: filterReg(blindReg, "date", [monthPrefix], lowerName),
+              q59: filterReg(oldAgedReg, "dateOfPrescription", [monthPrefix], lowerName, isMale),
+              q60: filterReg(oldAgedReg, "dateOfPrescription", [monthPrefix], lowerName, isFemale),
+              q61: filterReg(oldAgedReg, "dateOfPrescription", [monthPrefix], lowerName),
+              q66: filterReg(schoolReg, "dateOfPrescription", [monthPrefix], lowerName),
+              q67: filterReg(schoolReg, "dateOfPrescription", [monthPrefix], lowerName, isMale),
+              q68: filterReg(schoolReg, "dateOfPrescription", [monthPrefix], lowerName, isFemale),
+              q69: filterReg(schoolReg, "dateOfPrescription", [monthPrefix], lowerName),
+            };
+
+            const cCounts = {
+              q5: filterReg(cataractReg, "detectionDate", fiscalPrefixes, lowerName),
+              q7: filterReg(cataractReg, "surgeryDate", fiscalPrefixes, lowerName, isOperated),
+              q8: filterReg(cataractReg, "surgeryDate", fiscalPrefixes, lowerName, r => isOperated(r) && isFemale(r)),
+              q11: filterReg(oldAgedReg, "dateOfPrescription", fiscalPrefixes, lowerName),
+              q26: filterReg(schoolReg, "dateOfPrescription", fiscalPrefixes, lowerName),
+              q27: filterReg(schoolReg, "dateOfPrescription", fiscalPrefixes, lowerName),
+              q57: filterReg(blindReg, "date", fiscalPrefixes, lowerName),
+              q59: filterReg(oldAgedReg, "dateOfPrescription", fiscalPrefixes, lowerName, isMale),
+              q60: filterReg(oldAgedReg, "dateOfPrescription", fiscalPrefixes, lowerName, isFemale),
+              q61: filterReg(oldAgedReg, "dateOfPrescription", fiscalPrefixes, lowerName),
+              q66: filterReg(schoolReg, "dateOfPrescription", fiscalPrefixes, lowerName),
+              q67: filterReg(schoolReg, "dateOfPrescription", fiscalPrefixes, lowerName, isMale),
+              q68: filterReg(schoolReg, "dateOfPrescription", fiscalPrefixes, lowerName, isFemale),
+              q69: filterReg(schoolReg, "dateOfPrescription", fiscalPrefixes, lowerName),
+            };
+
+            const keyToIndex = {
+              q5: 4, q7: 6, q8: 7, q11: 10, q26: 25, q27: 26, q57: 56, q59: 58, q60: 59, q61: 60, q66: 65, q67: 66, q68: 67, q69: 68
+            };
+
+            Object.entries(keyToIndex).forEach(([key, idx]) => {
+              rec.monthData[idx] = mCounts[key];
+              rec.cumulativeData[idx] = cCounts[key];
+            });
+
+            byInstAgg.set(displayName, rec);
+          });
+        }
 
         const list = Array.from(byInstAgg.values());
         const distMonth = mkZeros();
@@ -958,7 +1594,10 @@ console.log("Kozhikode institutions (last 3):", (districtInstitutions["Kozhikode
           }
         }
         setInstitutionData(list);
-        setDistrictPerformance({ monthData: distMonth, cumulativeData: distCum });
+        setDistrictPerformance({
+          monthData: distMonth,
+          cumulativeData: distCum,
+        });
       } catch (e) {
         console.error("Institution-wise fiscal aggregate failed:", e);
         setInstitutionData([]);
@@ -992,31 +1631,40 @@ console.log("Kozhikode institutions (last 3):", (districtInstitutions["Kozhikode
     let cancelled = false;
 
     const pickLatest = (arr) =>
-      arr.slice().sort(
-        (a, b) =>
-          new Date(b?.updatedAt || b?.createdAt || 0) -
-          new Date(a?.updatedAt || a?.createdAt || 0)
-      )[0];
+      arr
+        .slice()
+        .sort(
+          (a, b) =>
+            new Date(b?.updatedAt || b?.createdAt || 0) -
+            new Date(a?.updatedAt || a?.createdAt || 0)
+        )[0];
 
     (async () => {
       try {
+        const dist = user?.isGuest ? "Kozhikode" : user?.district || "";
+        const inst = user?.isGuest ? "CHC Narikkuni" : user?.institution || "";
         const url =
           `${API_BASE}/api/reports?` +
-          `district=${encodeURIComponent(user?.district || "")}` +
-          `&institution=${encodeURIComponent(user?.institution || "")}` +
+          `district=${encodeURIComponent(dist)}` +
+          `&institution=${encodeURIComponent(inst)}` +
           `&month=${encodeURIComponent(month)}&year=${encodeURIComponent(year)}`;
 
         const res = await fetch(url);
         const json = await res.json().catch(() => ({}));
-        const items = Array.isArray(json?.docs) ? json.docs : Array.isArray(json) ? json : [];
+        const items = Array.isArray(json?.docs)
+          ? json.docs
+          : Array.isArray(json)
+          ? json
+          : [];
 
         const mine = items.filter(
           (d) =>
             String(d?.district || "").trim().toLowerCase() ===
-              String(user?.district || "").trim().toLowerCase() &&
+              String(dist).trim().toLowerCase() &&
             String(d?.institution || "").trim().toLowerCase() ===
-              String(user?.institution || "").trim().toLowerCase() &&
-            String(d?.month || "").trim().toLowerCase() === String(month).toLowerCase() &&
+              String(inst).trim().toLowerCase() &&
+            String(d?.month || "").trim().toLowerCase() ===
+              String(month).toLowerCase() &&
             String(d?.year || "") === String(year)
         );
 
@@ -1028,8 +1676,10 @@ console.log("Kozhikode institutions (last 3):", (districtInstitutions["Kozhikode
       }
     })();
 
-    return () => { cancelled = true; };
-  }, [menu, month, year, userRole, user?.district, user?.institution]);
+    return () => {
+      cancelled = true;
+    };
+  }, [menu, month, year, userRole, user?.district, user?.institution, user?.isGuest]);
 
   /* =======================  EXCEL DOWNLOADS  ======================= */
 
@@ -1045,15 +1695,19 @@ console.log("Kozhikode institutions (last 3):", (districtInstitutions["Kozhikode
   };
 
   const toCSV = (rows) =>
-    rows.map((r) =>
-      r.map((v) => {
-        const s = v == null ? "" : String(v);
-        return /[,"\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
-      }).join(",")
-    ).join("\n");
+    rows
+      .map((r) =>
+        r
+          .map((v) => {
+            const s = v == null ? "" : String(v);
+            return /[,"\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
+          })
+          .join(",")
+      )
+      .join("\n");
 
   const downloadInstitutionWiseXLSX = async () => {
-    if (!month || !year || !institutionData.length || !Q_ROWS.length) {
+    if (!month || !year || !institutionData.length || !qLabels.length) {
       alert("Nothing to export. Pick Month & Year and wait for data.");
       return;
     }
@@ -1064,14 +1718,17 @@ console.log("Kozhikode institutions (last 3):", (districtInstitutions["Kozhikode
     header.push("District (Month)", "District (Cumulative)");
 
     const rows = [header];
-    for (let i = 0; i < Q_ROWS.length; i++) {
-      const label = Q_ROWS[i].label;
+    for (let i = 0; i < qLabels.length; i++) {
+      const label = qLabels[i];
       const row = [label];
       instNames.forEach((n) => {
         const rec = institutionData.find((r) => r.institution === n);
         row.push(rec?.monthData?.[i] ?? 0, rec?.cumulativeData?.[i] ?? 0);
       });
-      row.push(districtPerformance.monthData?.[i] ?? 0, districtPerformance.cumulativeData?.[i] ?? 0);
+      row.push(
+        districtPerformance.monthData?.[i] ?? 0,
+        districtPerformance.cumulativeData?.[i] ?? 0
+      );
       rows.push(row);
     }
 
@@ -1080,11 +1737,16 @@ console.log("Kozhikode institutions (last 3):", (districtInstitutions["Kozhikode
       const wb = XLSX.utils.book_new();
       const ws = XLSX.utils.aoa_to_sheet(rows);
       XLSX.utils.book_append_sheet(wb, ws, "Institution-wise");
-      XLSX.writeFile(wb, `Institution-wise_${selectedDistrict}_${month}_${year}.xlsx`);
+      XLSX.writeFile(
+        wb,
+        `Institution-wise_${selectedDistrict}_${month}_${year}.xlsx`
+      );
     } catch (e) {
       console.warn("xlsx not available, fallback CSV:", e);
-      saveBlob(new Blob([toCSV(rows)], { type: "text/csv;charset=utf-8" }),
-        `Institution-wise_${selectedDistrict}_${month}_${year}.csv`);
+      saveBlob(
+        new Blob([toCSV(rows)], { type: "text/csv;charset=utf-8" }),
+        `Institution-wise_${selectedDistrict}_${month}_${year}.csv`
+      );
     }
   };
 
@@ -1096,22 +1758,13 @@ console.log("Kozhikode institutions (last 3):", (districtInstitutions["Kozhikode
 
     const res = await fetch(url);
     const json = await res.json().catch(() => ({}));
-    const list = Array.isArray(json?.docs) ? json.docs : Array.isArray(json) ? json : [];
+    const list = Array.isArray(json?.docs)
+      ? json.docs
+      : Array.isArray(json)
+      ? json
+      : [];
 
-    const hydrated = await Promise.all(
-      list.map(async (d) => {
-        try {
-          const id = d?._id || d?.id;
-          if (!id) return d;
-          const r2 = await fetch(`${API_BASE}/api/reports/${encodeURIComponent(id)}`);
-          const j2 = await r2.json().catch(() => ({}));
-          return j2?.doc || j2 || d;
-        } catch {
-          return d;
-        }
-      })
-    );
-    return hydrated;
+    return list;
   };
 
   const normalizeArray = (arr) => {
@@ -1125,9 +1778,12 @@ console.log("Kozhikode institutions (last 3):", (districtInstitutions["Kozhikode
       return out;
     });
   };
+
   const unionKeys = (rows) => {
     const set = new Set();
-    rows.forEach((r) => Object.keys(r || {}).forEach((k) => set.add(k)));
+    rows.forEach((r) =>
+      Object.keys(r || {}).forEach((k) => set.add(k))
+    );
     return Array.from(set);
   };
 
@@ -1145,38 +1801,75 @@ console.log("Kozhikode institutions (last 3):", (districtInstitutions["Kozhikode
         const inst = String(d?.institution || "").trim();
         if (!inst || /^doc\s/i.test(inst) || /^dc\s/i.test(inst)) return;
 
-        const eb = normalizeArray(d?.eyeBank || d?.eyebank || d?.eye_bank || []);
+        const eb = normalizeArray(
+          d?.eyeBank || d?.eyebank || d?.eye_bank || []
+        );
         eb.forEach((row) => ebRows.push({ Institution: inst, ...row }));
 
-        const vc = normalizeArray(d?.visionCenter || d?.visioncentre || d?.vision_centre || []);
+        const vc = normalizeArray(
+          d?.visionCenter || d?.visioncentre || d?.vision_centre || []
+        );
         vc.forEach((row) => vcRows.push({ Institution: inst, ...row }));
       });
 
-      const ebKeys = ["Institution", ...unionKeys(ebRows).filter((k) => k !== "Institution")];
-      const vcKeys = ["Institution", ...unionKeys(vcRows).filter((k) => k !== "Institution")];
+      const ebKeys = [
+        "Institution",
+        ...unionKeys(ebRows).filter((k) => k !== "Institution"),
+      ];
+      const vcKeys = [
+        "Institution",
+        ...unionKeys(vcRows).filter((k) => k !== "Institution"),
+      ];
 
-      const ebAOA = [ebKeys, ...ebRows.map((r) => ebKeys.map((k) => r?.[k] ?? ""))];
-      const vcAOA = [vcKeys, ...vcRows.map((r) => vcKeys.map((k) => r?.[k] ?? ""))];
+      const ebAOA = [
+        ebKeys,
+        ...ebRows.map((r) => ebKeys.map((k) => r?.[k] ?? "")),
+      ];
+      const vcAOA = [
+        vcKeys,
+        ...vcRows.map((r) => vcKeys.map((k) => r?.[k] ?? "")),
+      ];
 
       try {
         const XLSX = await import("xlsx");
         const wb = XLSX.utils.book_new();
-        if (ebRows.length) XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(ebAOA), "EyeBank");
-        if (vcRows.length) XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(vcAOA), "VisionCenter");
+        if (ebRows.length)
+          XLSX.utils.book_append_sheet(
+            wb,
+            XLSX.utils.aoa_to_sheet(ebAOA),
+            "EyeBank"
+          );
+        if (vcRows.length)
+          XLSX.utils.book_append_sheet(
+            wb,
+            XLSX.utils.aoa_to_sheet(vcAOA),
+            "VisionCenter"
+          );
         if (!ebRows.length && !vcRows.length) {
           alert("No Eye Bank / Vision Center data for this month.");
           return;
         }
-        XLSX.writeFile(wb, `EB_VC_${selectedDistrict}_${month}_${year}.xlsx`);
+        XLSX.writeFile(
+          wb,
+          `EB_VC_${selectedDistrict}_${month}_${year}.xlsx`
+        );
       } catch (e) {
         console.warn("xlsx not available, fallback CSV:", e);
         if (ebRows.length) {
-          saveBlob(new Blob([toCSV(ebAOA)], { type: "text/csv;charset=utf-8" }),
-            `EyeBank_${selectedDistrict}_${month}_${year}.csv`);
+          saveBlob(
+            new Blob([toCSV(ebAOA)], {
+              type: "text/csv;charset=utf-8",
+            }),
+            `EyeBank_${selectedDistrict}_${month}_${year}.csv`
+          );
         }
         if (vcRows.length) {
-          saveBlob(new Blob([toCSV(vcAOA)], { type: "text/csv;charset=utf-8" }),
-            `VisionCenter_${selectedDistrict}_${month}_${year}.csv`);
+          saveBlob(
+            new Blob([toCSV(vcAOA)], {
+              type: "text/csv;charset=utf-8",
+            }),
+            `VisionCenter_${selectedDistrict}_${month}_${year}.csv`
+          );
         }
         if (!ebRows.length && !vcRows.length) {
           alert("No Eye Bank / Vision Center data for this month.");
@@ -1191,12 +1884,20 @@ console.log("Kozhikode institutions (last 3):", (districtInstitutions["Kozhikode
   /* ------------------------- Auth & shells ------------------------- */
   if (!user) {
     return showRegister ? (
-      <Register onRegister={() => setShowRegister(false)} />
+      <Register
+        onRegister={() => setShowRegister(false)}
+        onBackToLogin={() => setShowRegister(false)}
+      />
     ) : (
       <Login
         onLogin={(loggedInUser) => {
           setUser(loggedInUser);
           setShowVideo(true);
+          if (loggedInUser?.role === "ADMIN") {
+            setMenu("admin-approvals");
+          } else {
+            setMenu("entry");
+          }
         }}
         onShowRegister={() => setShowRegister(true)}
       />
@@ -1223,7 +1924,11 @@ console.log("Kozhikode institutions (last 3):", (districtInstitutions["Kozhikode
     );
   }
 
-  const viewerInstitution = userRole === "DOC" ? undefined : user?.institution || "";
+  const viewerInstitution = userRole === "DOC" || userRole === "ADMIN" ? undefined : user?.institution || "";
+
+  // DEBUG — remove later
+  console.log("ACTIVE MENU =", menu);
+  window.DEBUG_MENU = menu;
 
   return (
     <div className="min-h-screen bg-gray-100 pt-[80px]">
@@ -1251,6 +1956,11 @@ console.log("Kozhikode institutions (last 3):", (districtInstitutions["Kozhikode
       )}
 
       <div className="p-4 font-serif text-[12pt]">
+        {/* Admin Approvals Portal */}
+        {menu === "admin-approvals" && (
+          <AdminApprovals user={user} onClose={() => setMenu("entry")} />
+        )}
+
         {/* Report Entry */}
         {menu === "entry" && (
           <ReportEntry
@@ -1260,7 +1970,7 @@ console.log("Kozhikode institutions (last 3):", (districtInstitutions["Kozhikode
             initialVisionCenter={visionCenter}
             initialMonth={month}
             initialYear={year}
-            disabled={user?.isGuest}
+            disabled={false}
           />
         )}
 
@@ -1268,16 +1978,28 @@ console.log("Kozhikode institutions (last 3):", (districtInstitutions["Kozhikode
         {menu === "view" && (
           <div className="p-4 font-serif text-[12pt]">
             <div className="flex justify-center gap-4 mb-4">
-              <select className="border p-2 rounded" value={month} onChange={(e) => setMonth(e.target.value)}>
+              <select
+                className="border p-2 rounded"
+                value={month}
+                onChange={(e) => setMonth(e.target.value)}
+              >
                 <option value="">Month</option>
                 {MONTHS.map((m) => (
-                  <option key={m} value={m}>{m}</option>
+                  <option key={m} value={m}>
+                    {m}
+                  </option>
                 ))}
               </select>
-              <select className="border p-2 rounded" value={year} onChange={(e) => setYear(e.target.value)}>
+              <select
+                className="border p-2 rounded"
+                value={year}
+                onChange={(e) => setYear(e.target.value)}
+              >
                 <option value="">Year</option>
                 {Array.from({ length: 6 }, (_, i) => 2024 + i).map((y) => (
-                  <option key={y} value={y}>{y}</option>
+                  <option key={y} value={y}>
+                    {y}
+                  </option>
                 ))}
               </select>
             </div>
@@ -1285,8 +2007,8 @@ console.log("Kozhikode institutions (last 3):", (districtInstitutions["Kozhikode
             <ReportsList
               filterMonth={month}
               filterYear={year}
-              filterDistrict={user?.district}
-              filterInstitution={viewerInstitution}
+              filterDistrict={user?.isGuest ? "Kozhikode" : user?.district}
+              filterInstitution={user?.isGuest ? "" : viewerInstitution}
               onSelect={(report) => setCurrent(report || null)}
             />
 
@@ -1297,36 +2019,57 @@ console.log("Kozhikode institutions (last 3):", (districtInstitutions["Kozhikode
             </div>
 
             {currentReport && (
-              <ViewReports reportData={currentReport} month={currentReport.month} year={currentReport.year} />
+              <ViewReports
+                reportData={currentReport}
+                month={currentReport.month}
+                year={currentReport.year}
+              />
             )}
           </div>
         )}
 
-        {/* District → Institution-wise (table) */}
-        {menu === "district-institutions" && (
+        {/* --------------------- Research → Amblyopia --------------------- */}
+
+        {/* 1. Amblyopia ENTRY form */}
+        {menu === "research-amblyopia-entry" && (
+          <AmblyopiaForm user={user} />
+        )}
+
+        {/* 2. View saved Amblyopia records */}
+        {menu === "research-amblyopia-view" && (
+          <AmblyopiaView user={user} />
+        )}
+
+        {/* 3. Amblyopia Analytics */}
+        {menu === "research-amblyopia-analytics" && (
+          <AmblyopiaAnalytics user={user} />
+        )}
+
+        {/* District → Institution-wise (table) or any of its sub-reports */}
+        {(menu === "district-institutions" ||
+          menu === "performance-cataract" ||
+          menu === "op-eye-diseases" ||
+          menu === "seh-spectacles-eyebank" ||
+          menu === "other-diseases" ||
+          menu === "identified-cataract") && (
           <>
-            <MonthYearSelector month={month} year={year} setMonth={setMonth} setYear={setYear} />
-            {userRole === "DOC" && (
-              <div className="no-print flex flex-wrap items-center justify-center gap-3 mb-4">
-                <button
-                  className="px-4 py-2 rounded bg-emerald-600 hover:bg-emerald-700 text-white"
-                  onClick={downloadInstitutionWiseXLSX}
-                  disabled={!month || !year}
-                >
-                  ⬇️ Download Institution-wise (.xlsx)
-                </button>
-                <button
-                  className="px-4 py-2 rounded bg-indigo-600 hover:bg-indigo-700 text-white"
-                  onClick={downloadEyeBankVisionCenterXLSX}
-                  disabled={!month || !year}
-                >
-                  ⬇️ Download Eye Bank & Vision Center (.xlsx)
-                </button>
-              </div>
-            )}
+            <MonthYearSelector
+              month={month}
+              year={year}
+              setMonth={setMonth}
+              setYear={setYear}
+            />
             {month && year ? (
               <ViewInstitutionWiseReport
-                questions={Q_ROWS.map((q) => q.label)}
+                reportTitle={
+                  menu === "performance-cataract" ? "Performance Of Cataract Surgery" :
+                  menu === "identified-cataract" ? "Number of Cataract Cases Identified" :
+                  menu === "op-eye-diseases" ? "OP & Other Eye Diseases" :
+                  menu === "other-diseases" ? "Details of Other Eye Diseases" :
+                  menu === "seh-spectacles-eyebank" ? "SEHP & Spectacles to Old Aged, Eye Bank" :
+                  "Institution-wise District Report"
+                }
+                questions={getQuestionsForMenu(menu)}
                 institutionNames={institutionNamesMemo}
                 data={institutionData}
                 districtPerformance={districtPerformance}
@@ -1335,7 +2078,7 @@ console.log("Kozhikode institutions (last 3):", (districtInstitutions["Kozhikode
               />
             ) : (
               <div className="text-center text-gray-600 mt-6 no-print">
-                Please select both <b>Month</b> and <b>Year</b> to view institution-wise report.
+                Please select both <b>Month</b> and <b>Year</b> to view the report.
               </div>
             )}
           </>
@@ -1344,7 +2087,12 @@ console.log("Kozhikode institutions (last 3):", (districtInstitutions["Kozhikode
         {/* Submenu: Download Institution-wise */}
         {menu === "district-dl-inst" && (
           <>
-            <MonthYearSelector month={month} year={year} setMonth={setMonth} setYear={setYear} />
+            <MonthYearSelector
+              month={month}
+              year={year}
+              setMonth={setMonth}
+              setYear={setYear}
+            />
             <div className="no-print flex justify-center mt-3">
               <button
                 className="px-5 py-2 rounded bg-emerald-600 hover:bg-emerald-700 text-white disabled:opacity-50"
@@ -1363,7 +2111,12 @@ console.log("Kozhikode institutions (last 3):", (districtInstitutions["Kozhikode
         {/* Submenu: Download Eye Bank & VC */}
         {menu === "district-dl-ebvc" && (
           <>
-            <MonthYearSelector month={month} year={year} setMonth={setMonth} setYear={setYear} />
+            <MonthYearSelector
+              month={month}
+              year={year}
+              setMonth={setMonth}
+              setYear={setYear}
+            />
             <div className="no-print flex justify-center mt-3">
               <button
                 className="px-5 py-2 rounded bg-indigo-600 hover:bg-indigo-700 text-white disabled:opacity-50"
@@ -1382,9 +2135,21 @@ console.log("Kozhikode institutions (last 3):", (districtInstitutions["Kozhikode
         {/* District Summary Tables */}
         {menu === "district-tables" && (
           <>
-            <MonthYearSelector month={month} year={year} setMonth={setMonth} setYear={setYear} />
+            <MonthYearSelector
+              month={month}
+              year={year}
+              setMonth={setMonth}
+              setYear={setYear}
+            />
             {month && year ? (
-              <ViewDistrictTables user={user} month={month} year={year} />
+              <ViewDistrictTables
+                user={user}
+                month={month}
+                year={year}
+                district={selectedDistrict}
+                showDownloadEB={true}
+                showDownloadVC={true}
+              />
             ) : (
               <div className="text-center text-gray-600 mt-6 no-print">
                 Please select both <b>Month</b> and <b>Year</b> to view district tables.
@@ -1397,16 +2162,28 @@ console.log("Kozhikode institutions (last 3):", (districtInstitutions["Kozhikode
         {menu === "print" && (
           <>
             <div className="flex justify-center gap-4 mb-4 no-print">
-              <select className="border p-2 rounded" value={month} onChange={(e) => setMonth(e.target.value)}>
+              <select
+                className="border p-2 rounded"
+                value={month}
+                onChange={(e) => setMonth(e.target.value)}
+              >
                 <option value="">Month</option>
                 {MONTHS.map((m) => (
-                  <option key={m} value={m}>{m}</option>
+                  <option key={m} value={m}>
+                    {m}
+                  </option>
                 ))}
               </select>
-              <select className="border p-2 rounded" value={year} onChange={(e) => setYear(e.target.value)}>
+              <select
+                className="border p-2 rounded"
+                value={year}
+                onChange={(e) => setYear(e.target.value)}
+              >
                 <option value="">Year</option>
                 {Array.from({ length: 6 }, (_, i) => 2024 + i).map((y) => (
-                  <option key={y} value={y}>{y}</option>
+                  <option key={y} value={y}>
+                    {y}
+                  </option>
                 ))}
               </select>
             </div>
@@ -1419,7 +2196,11 @@ console.log("Kozhikode institutions (last 3):", (districtInstitutions["Kozhikode
                 >
                   🖨️ Print (A4 portrait)
                 </button>
-                <ViewReports reportData={currentReport} month={currentReport.month} year={currentReport.year} />
+                <ViewReports
+                  reportData={currentReport}
+                  month={currentReport.month}
+                  year={currentReport.year}
+                />
               </>
             )}
 
@@ -1433,7 +2214,7 @@ console.log("Kozhikode institutions (last 3):", (districtInstitutions["Kozhikode
               <>
                 {month && year ? (
                   <ViewInstitutionWiseReport
-                    questions={Q_ROWS.map((q) => q.label)}
+                    questions={qLabels}
                     institutionNames={institutionNamesMemo}
                     data={institutionData}
                     districtPerformance={districtPerformance}
@@ -1450,14 +2231,36 @@ console.log("Kozhikode institutions (last 3):", (districtInstitutions["Kozhikode
           </>
         )}
 
+        {/* Edit Reports */}
         {menu === "edit" && (
           <EditGate user={user}>
             <EditReport user={user} />
           </EditGate>
         )}
 
+        {/* Search Reports */}
+        {menu === "search" && (
+          <SearchReports
+            user={user}
+            onOpen={(report) => {
+              setCurrent(report || null);
+              setMenu("view"); // re-use the existing viewer
+            }}
+          />
+        )}
+
+        {/* Vision Center test */}
         {menu === "test-vc" && <TestVisionCenter />}
 
+        {/* PWA Registers Data Entry */}
+        {menu && menu.startsWith("register-") && (
+          <RegistersManager
+            user={user}
+            activeRegister={menu}
+          />
+        )}
+
+        {/* Default home message */}
         {menu === "" && (
           <div className="text-center text-gray-500 mt-10 text-lg italic">
             🔹 Please select a menu option to begin.
@@ -1469,6 +2272,3 @@ console.log("Kozhikode institutions (last 3):", (districtInstitutions["Kozhikode
 }
 
 export default App;
-
-
-// cache-bust 2025-10-01T01:37:03Z

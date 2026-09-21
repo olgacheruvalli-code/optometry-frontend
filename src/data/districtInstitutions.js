@@ -1,3 +1,4 @@
+
 export const districts = [
   "Thiruvananthapuram", "Kollam", "Pathanamthitta", "Alappuzha",
   "Kottayam", "Idukki", "Ernakulam", "Thrissur", "Palakkad",
@@ -11,7 +12,7 @@ const baseInstitutions = {
   ],
   Kollam: [
     "CHC Anchal", "CHC Chavara", "CHC Kulathuppuzha", "CHC Mynagappally", "CHC Nedumpana",
-    "THQH Kottarakkara", "THQH Punalur", "THQH Sasthamcotta", "District Hospital Kollam (A. A. Rahim memorial)"
+    "THQH Kottarakkara", "THQH Punalur", "THQH Sasthamcotta", "District Hospital Kollam (A. A. Rahim memorial)"
   ],
   Pathanamthitta: [
     "THQH Thiruvalla", "District Hospital Kozhencherry"
@@ -39,17 +40,46 @@ const baseInstitutions = {
     "CHC Chungathara", "CHC Edapal", "CHC Kalikavu", "District Hospital Nilambur", "THQH Tirurangadi"
   ],
   Kozhikode: [
-    "CHC Mukkam", "CHC orkkattery", "CHC Narikkuni", "District Hospital Vadakara", "Taluk Hospital Perambra",
-    "CHC ulliery", "General Hospital Kozhikod", "CHC Thalakkulathur","CHC Thiruvallur" ,"CHC Olavanna",
-    "Taluk Hospital Farook", "CHC Cheruvannur", "CHC Thamarassery",
-    "Taluk Hospital Koyilandy", "CHC Thiruvangoor", "Taluk Hospital Balussery", "PHC Meppayur",
-    "CHC Melady", "CHC Valayam", "Taluk Hospital Kuttiadi","Taluk Hospital Nadapuram","CHC Cheruvadi","District Mobile Unit"
-  ],
+  "CHC Mukkam", "CHC orkkattery", "CHC Narikkuni", "District Hospital Vadakara",
+  "Taluk Hospital Perambra", "CHC ulliery", "General Hospital Kozhikod",
+  "CHC Thalakkulathur", "CHC Thiruvallur", "CHC Olavanna",
+  "Taluk Hospital Farook", "CHC Cheruvannur", "Taluk Hospital Thamarassery",
+  "Taluk Hospital Koyilandy", "CHC Thiruvangoor", "Taluk Hospital Balussery",
+  "PHC Meppayur", "CHC Melady", "CHC Valayam", "Taluk Hospital Kuttiadi",
+  "Taluk Hospital Nadapuram", "CHC Cheruvadi", "MCH Unit Cheroopa",
+  "District Mobile Unit"
+],
+
   Wayanad: [
     "CHC Meenangdi", "CHC Panamaram", "THQH Sulthan Bathery", "District Hospital Mananthavady"
   ],
   Kannur: [
-    "CHC Pappinissery", "THQH Taliparamba", "District Hospital Kannur"
+    "Dist. Hospital, Kannur",
+    "Dist.Mobile Unit",
+    "General Hospital, Thalassery",
+
+    "THQH, Thaliparamba",
+    "THQH, Payyannur",
+    "THQH, Kuthuparamba",
+    "THQH, Pazhayangadi",
+    "THQH, Peringome",
+    "THQH, Iritty",
+
+    "CHC Azhikode",
+    "CHC Pappinissery",
+    "CHC Mayyil",
+    "CHC Irivery",
+    "CHC Pinarayi",
+    "CHC Panoor",
+
+    "PHC Oduvallithattu",
+    "PHC Irikkur",
+    "PHC Ezhome",
+    "PHC Chittariparamba",
+    "PHC Keezppally",
+    "PHC Cherukunnu",
+
+    "DEIC Mangattuparamba"
   ],
   Kasaragod: [
     "CHC Cheruvathur", "CHC Periye", "District Hospital Kanhangad"
@@ -59,6 +89,6 @@ const baseInstitutions = {
 export const districtInstitutions = Object.fromEntries(
   Object.entries(baseInstitutions).map(([district, insts]) => [
     district,
-    [...insts, `DOC ${district}`] // add DC to each list
+    [...insts, `DOC ${district}`]  // DOC only; no DC anywhere
   ])
 );
